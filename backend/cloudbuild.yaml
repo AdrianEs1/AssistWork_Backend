@@ -1,0 +1,56 @@
+# cloudbuild.yaml
+steps:
+  # Paso 1: Construir la imagen con caché
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--cache-from'
+      - 'gcr.io/$PROJECT_ID/assistwork-backend:latest'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/assistwork-backend:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/assistwork-backend:latest'
+      - '.'
+    timeout: 1200s
+
+  # Paso 2: Subir la imagen con el commit SHA
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/assistwork-backend:$COMMIT_SHA'
+
+  # Paso 3: Subir la imagen con tag latest
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'gcr.io/$PROJECT_ID/assistwork-backend:latest'
+
+  # Paso 4: Desplegar en Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'assistwork-backend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/assistwork-backend:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+
+# Timeout total del build
+timeout: 1800s
+
+# Imágenes que se guardarán en Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/assistwork-backend:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/assistwork-backend:latest'
+
+# Opciones de optimización
+options:
+  machineType: 'E2_HIGHCPU_8'  # Máquina más potente para builds más rápidos
+  logging: CLOUD_LOGGING_ONLY
+
+
