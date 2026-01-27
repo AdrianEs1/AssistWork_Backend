@@ -5,23 +5,40 @@ from email.mime.text import MIMEText
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from datetime import datetime
-from config import GMAIL_SENDER
-
-
-TOKEN_PATH = "token_agente.pickle"
+from config import GMAIL_SENDER, GMAIL_TOKEN_SUPPORT
 
 
 def get_gmail_credentials():
-    with open(TOKEN_PATH, "rb") as f:
-        creds = pickle.load(f)
-
-    # 🔁 Refrescar token si expiró
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        with open(TOKEN_PATH, "wb") as f:
-            pickle.dump(creds, f)
-
-    return creds
+    """
+    Carga las credenciales de Gmail desde variable de entorno (Secret Manager en producción).
+    Maneja el refresh automático del token.
+    """
+    try:
+        # Decodificar el token desde base64
+        token_base64 = GMAIL_TOKEN_SUPPORT
+        
+        if not token_base64:
+            raise ValueError("GMAIL_TOKEN_SUPPORT no está configurado")
+        
+        # Convertir de base64 a bytes
+        token_bytes = base64.b64decode(token_base64)
+        
+        # Deserializar el pickle
+        creds = pickle.loads(token_bytes)
+        
+        # 🔁 Refrescar token si expiró
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            
+            # ⚠️ IMPORTANTE: En producción NO podemos guardar el token actualizado
+            # porque Secret Manager es read-only desde Cloud Run.
+            # El token se auto-refresca en cada llamada si es necesario.
+            print(f"✅ Token refrescado exitosamente - {datetime.now()}")
+        
+        return creds
+        
+    except Exception as e:
+        raise ValueError(f"Error al cargar credenciales de Gmail: {e}")
 
 
 
