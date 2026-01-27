@@ -14,8 +14,8 @@ app = FastAPI(
 origins = [
 
     "http://localhost:5173",
-    "https://assistwork.vercel.app/" #AQUI SE MODIFICA POR LA URL EN PRODUCCION
-
+    "https://assistwork.vercel.app",
+    "https://assistwork-backend-273334954418.us-central1.run.app" #
 
 ]
 
