@@ -67,7 +67,7 @@ async def login(credentials: UserLogin, response: Response, db: Session = Depend
     if not user or not verify_password(credentials.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Email o contraseña incorrectos",     
+            detail="Email o contraseña incorrectos",
         )
     
     if not user.is_active:
@@ -75,13 +75,6 @@ async def login(credentials: UserLogin, response: Response, db: Session = Depend
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuario inactivo"
         )
-    
-    if not user.is_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Debes verificar tu correo antes de iniciar sesión"
-        )
-
     
     user.last_login = datetime.utcnow()
     db.commit()
@@ -95,15 +88,66 @@ async def login(credentials: UserLogin, response: Response, db: Session = Depend
         key="refresh_token",
         value=refresh_token,
         httponly=True,  # No accesible desde JavaScript
-        secure=COOKIE_SECURE,    # Solo HTTPS en producción
-        samesite="lax", # Protección CSRF
+        secure=True,    # Solo HTTPS en producción
+        samesite="none",   # Protección CSRF
+        # partitioned=True, Activar en futuras versiones
         max_age=7 * 24 * 60 * 60  # 7 días en segundos
     )
-
     
     # Solo devolver access_token en el body
     return {
         "access_token": access_token,
+        "token_type": "bearer"
+    }
+
+
+@router.post("/refresh")
+async def refresh_token(
+    response: Response,
+    refresh_token: str = Cookie(None),  # Leer desde cookie
+    db: Session = Depends(get_db)
+):
+    """Refrescar access token"""
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token no encontrado"
+        )
+    
+    payload = decode_token(refresh_token)
+    
+    if payload is None or payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token inválido"
+        )
+    
+    user_id = payload.get("sub")
+    user = db.query(User).filter(User.id == user_id).first()
+    
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario no encontrado o inactivo"
+        )
+    
+    # Crear nuevos tokens
+    new_access_token = create_access_token(data={"sub": str(user.id)})
+    new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
+    
+    # Actualizar cookie
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        # partitioned=True,  Activar en futuras versiones
+        max_age=7 * 24 * 60 * 60
+    )
+    
+    return {
+        "access_token": new_access_token,
         "token_type": "bearer"
     }
 
@@ -175,56 +219,6 @@ async def resend_code(
     return {"message": "Código de verificación enviado"}
 
 
-
-
-@router.post("/refresh")
-async def refresh_token(
-    response: Response,
-    refresh_token: str = Cookie(None),  # Leer desde cookie
-    db: Session = Depends(get_db)
-):
-    """Refrescar access token"""
-    if not refresh_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token no encontrado"
-        )
-    
-    payload = decode_token(refresh_token)
-    
-    if payload is None or payload.get("type") != "refresh":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token inválido"
-        )
-    
-    user_id = payload.get("sub")
-    user = db.query(User).filter(User.id == user_id).first()
-    
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Usuario no encontrado o inactivo"
-        )
-    
-    # Crear nuevos tokens
-    new_access_token = create_access_token(data={"sub": str(user.id)})
-    new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
-    
-    # Actualizar cookie
-    response.set_cookie(
-        key="refresh_token",
-        value=new_refresh_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite="lax",
-        max_age=7 * 24 * 60 * 60
-    )
-    
-    return {
-        "access_token": new_access_token,
-        "token_type": "bearer"
-    }
 
 @router.post("/logout")
 async def logout(response: Response, current_user: User = Depends(get_current_user)):
