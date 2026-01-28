@@ -11,8 +11,6 @@ import os
 import secrets
 import requests
 
-"https://www.googleapis.com/auth/drive.metadata.readonly",
-"https://www.googleapis.com/auth/drive.readonly",
 
 
 # 🔧 Configuración base de Google OAuth
@@ -37,31 +35,7 @@ SUPPORTED_SERVICES = {
         "extract_email": lambda profile: profile.get("emailAddress"),
     },
 
-    "drive": {
-        "scopes": [
-            "https://www.googleapis.com/auth/drive.file",
-        ],
-        "profile_api": (
-            "drive",
-            "v3",
-            lambda service: service.about().get(fields="user").execute(),
-        ),
-        "extract_email": lambda profile: profile["user"]["emailAddress"],
-    },
     
-    "calendar": {
-        "scopes": [
-            "https://www.googleapis.com/auth/calendar.readonly",
-            "https://www.googleapis.com/auth/calendar.events",
-            "https://www.googleapis.com/auth/calendar",
-        ],
-        "profile_api": (
-            "calendar",
-            "v3",
-            lambda service: service.calendarList().list().execute(),
-        ),
-        "extract_email": lambda profile: profile["items"][0].get("id", "") if profile.get("items") else "",
-    },
 }
 
 

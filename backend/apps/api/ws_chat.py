@@ -32,46 +32,53 @@ router = APIRouter()
 
 
 class ConnectionManager:
-    """
-    Gestiona conexiones WebSocket activas.
-    Cada conexión es independiente (no hay broadcast).
-    """
-    
     def __init__(self):
-        self.active_connections: dict[str, WebSocket] = {}
+        # ← CAMBIO: Estructura anidada {user_id: {session_id: websocket}}
+        self.active_connections: dict[str, dict[str, WebSocket]] = {}
     
-    async def connect(self, websocket: WebSocket, user_id: str):
+    async def connect(self, websocket: WebSocket, user_id: str, session_id: str):
         """Acepta conexión y la registra"""
         await websocket.accept()
-        self.active_connections[user_id] = websocket
-        print(f"✅ WebSocket conectado: user_id={user_id}")
+        
+        # ← NUEVO: Crear dict para user si no existe
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = {}
+        
+        # ← NUEVO: Guardar por session_id
+        self.active_connections[user_id][session_id] = websocket
+        print(f"✅ WebSocket conectado: user_id={user_id}, session_id={session_id}")
     
-    def disconnect(self, user_id: str):
+    def disconnect(self, user_id: str, session_id: str):
         """Elimina conexión del registro"""
         if user_id in self.active_connections:
-            del self.active_connections[user_id]
-            print(f"❌ WebSocket desconectado: user_id={user_id}")
+            if session_id in self.active_connections[user_id]:
+                del self.active_connections[user_id][session_id]
+                print(f"❌ WebSocket desconectado: user_id={user_id}, session_id={session_id}")
+            
+            # ← NUEVO: Limpiar dict vacío
+            if not self.active_connections[user_id]:
+                del self.active_connections[user_id]
     
-    async def send_event(self, user_id: str, event_type: str, data: dict):
+    async def send_event(self, user_id: str, session_id: str, event_type: str, data: dict):
         """
         Envía un evento al cliente via WebSocket
-        
-        Args:
-            user_id: ID del usuario
-            event_type: Tipo de evento (analyzing, executing, completed, etc.)
-            data: Datos del evento
         """
-        websocket = self.active_connections.get(user_id)
+        # ← CAMBIO: Buscar session específica
+        if user_id not in self.active_connections:
+            return
+        
+        websocket = self.active_connections[user_id].get(session_id)
         if websocket:
             try:
                 message = {
                     "type": event_type,
+                    "session_id": session_id,  # ← NUEVO: Incluir session_id
                     "timestamp": datetime.utcnow().isoformat() + "Z",
                     **data
                 }
                 await websocket.send_json(message)
             except Exception as e:
-                print(f"⚠️ Error enviando evento a {user_id}: {e}")
+                print(f"⚠️ Error enviando evento a {user_id}/{session_id}: {e}")
 
 
 # Instancia global del gestor
@@ -81,7 +88,8 @@ manager = ConnectionManager()
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    token: str = Query(..., description="JWT access token")
+    token: str = Query(..., description="JWT access token"),
+    sessionId: str = Query(..., description="Session ID único por pestaña")  # ← NUEVO
 ):
     """
     WebSocket endpoint para chat con streaming de eventos.
@@ -119,7 +127,7 @@ async def websocket_endpoint(
         db.close()  # ← Cerrar sesión después de autenticar
     
     # === 2. Conectar ===
-    await manager.connect(websocket, str(current_user.id))
+    await manager.connect(websocket, str(current_user.id), sessionId)  # ← Agregar sessionId
     
     try:
         # === 3. Loop de mensajes ===
@@ -140,18 +148,21 @@ async def websocket_endpoint(
             # Validar tipo de mensaje
             if message_data.get("type") != "chat":
                 await manager.send_event(
-                    str(current_user.id),
-                    "error",
-                    {"message": f"Tipo de mensaje no soportado: {message_data.get('type')}"}
-                )
+                str(current_user.id),
+                session_id,  # ← AGREGAR
+                "error",
+                {"message": f"Tipo de mensaje no soportado: {message_data.get('type')}"}
+            )
                 continue
             
             user_message = message_data.get("message", "").strip()
             conversation_id = message_data.get("conversation_id")
-            
+            session_id = message_data.get("session_id")  # ← NUEVO
+
             if not user_message:
                 await manager.send_event(
                     str(current_user.id),
+                    session_id,  # ← NUEVO
                     "error",
                     {"message": "El mensaje no puede estar vacío"}
                 )
@@ -194,8 +205,8 @@ async def websocket_endpoint(
                     
                     # 4.5 Definir callback para eventos del orquestador
                     async def event_callback(event_type: str, event_data: dict):
-                        """Callback que el orquestador usará para emitir eventos"""
-                        await manager.send_event(str(current_user.id), event_type, event_data)
+                        await manager.send_event(str(current_user.id), session_id, event_type, event_data)  # ← AGREGAR session_id
+
                     
                     # 4.6 Ejecutar orquestador CON callback
                     result = await orchestrator(
@@ -243,6 +254,7 @@ async def websocket_endpoint(
                     # 4.11 Enviar evento final
                     await manager.send_event(
                         str(current_user.id),
+                        session_id,  # ← AGREGAR
                         "completed",
                         {
                             "message": result_text,
@@ -261,13 +273,14 @@ async def websocket_endpoint(
             except Exception as e:
                 print(f"❌ Error procesando mensaje: {e}")
                 await manager.send_event(
-                    str(current_user.id),
-                    "error",
-                    {
-                        "message": f"Error procesando tu mensaje: {str(e)}",
-                        "error_type": type(e).__name__
-                    }
-                )
+                str(current_user.id),
+                session_id,  # ← AGREGAR
+                "error",
+                {
+                    "message": f"Error procesando tu mensaje: {str(e)}",
+                    "error_type": type(e).__name__
+                }
+            )
     
 
     except WebSocketDisconnect:
@@ -275,4 +288,4 @@ async def websocket_endpoint(
     except Exception as e:
         print(f"❌ Error en WebSocket: {e}")
     finally:
-        manager.disconnect(str(current_user.id))
+        manager.disconnect(str(current_user.id), sessionId)  # ← Agregar sessionId
