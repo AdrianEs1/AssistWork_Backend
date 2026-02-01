@@ -12,24 +12,23 @@ router = APIRouter(prefix="/agent/context", tags=["Agent Context"])
 
 @router.post("/files")
 def set_conversation_files(
-    conversation_id: uuid.UUID = Form(...),
     files: List[UploadFile] = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    print(f"📎 Conversación: {conversation_id}")
+    # print(f"📎 Conversación: {conversation_id}")
 
     # Verificar que la conversación existe y pertenece al usuario
-    conversation = db.query(Conversation).filter(
+    """conversation = db.query(Conversation).filter(
         Conversation.id == conversation_id,
         Conversation.user_id == current_user.id
-    ).first()
+    ).first()"""
 
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+    """if not conversation:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")"""
 
     # Directorio para almacenar los archivos
-    base_path = f"storage/conversations/{conversation_id}"
+    base_path = f"storage/conversations/{current_user.id}"
     os.makedirs(base_path, exist_ok=True)
 
     saved_files = []

@@ -461,6 +461,7 @@ def get_decision_prompt(user_input: str, context: str, available_tools: list) ->
       === AGENT_HELP EXAMPLES (CRITICAL) ===
 
       📚 **Questions about agent capabilities:**
+      "Hola", "Cómo estas?" → {{"actions": [], "type: "agent_help"}}
       "¿Qué puedes hacer?" → {{"actions": [], "type": "agent_help"}}
       "Cuáles son tus funciones" → {{"actions": [], "type": "agent_help"}}
       "Para qué sirves" → {{"actions": [], "type": "agent_help"}}
@@ -469,7 +470,6 @@ def get_decision_prompt(user_input: str, context: str, available_tools: list) ->
       🔗 **Questions about connecting/OAuth:**
       "Cómo conecto Gmail" → {{"actions": [], "type": "agent_help"}}
       "Cómo conectar mis aplicaciones" → {{"actions": [], "type": "agent_help"}}
-      "Cómo conectar Drive" → {{"actions": [], "type": "agent_help"}}
       "No sé cómo conectar mi cuenta" → {{"actions": [], "type": "agent_help"}}
       "Qué permisos necesitas" → {{"actions": [], "type": "agent_help"}}
 

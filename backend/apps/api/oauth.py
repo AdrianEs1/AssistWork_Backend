@@ -12,6 +12,7 @@ from apps.schemas.oauth import (
 from apps.models.user import User
 from apps.models.oauth_connection import OAuthConnection
 from tools.App_Drive.dic_drive_tool import DriveService
+from config import FRONTEND_URL
 
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
@@ -110,7 +111,7 @@ async def oauth_callback(
                         status: 'success',
                         app: '{service}',
                         email: '{email}'
-                    }}, 'https://optimusagent.vercel.app');
+                    }}, '{FRONTEND_URL}');
                     setTimeout(() => window.close(), 500);
                 }}
             </script>

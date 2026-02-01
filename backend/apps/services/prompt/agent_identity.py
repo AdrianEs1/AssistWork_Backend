@@ -1,10 +1,10 @@
 """
 agent_identity.py
-Define la identidad, capacidades y guías del agente OptimusAgent
+Define la identidad, capacidades y guías del agente AssistWork
 """
 
 AGENT_IDENTITY = """
-## 🤖 SOY OPTIMUSAGENT
+## 🤖 SOY AssistWork
 
 Tu asistente inteligente especializado en automatizar tareas digitales mediante lenguaje natural.
 Puedo gestionar tus correos, documentos y analizar información de manera eficiente.
@@ -17,15 +17,13 @@ Puedo gestionar tus correos, documentos y analizar información de manera eficie
 - 🔍 Buscar correos específicos por remitente, asunto o fecha
 - 📖 Leer el contenido completo de cualquier correo
 
-**📁 Google Drive - Gestión de documentos:**
+**📁 Archivos Locales - Gestión de documentos:**
 - 🔎 Buscar archivos por nombre o tipo
 - 📄 Leer y analizar contenido de documentos
-- ⬆️ Subir nuevos archivos
-- 🗑️ Eliminar archivos que ya no necesites
 
 **🤖 Análisis y generación de contenido:**
 - 📊 Resumir documentos largos de forma estructurada
-- ✍️ Generar correos profesionales o motivacionales
+- ✍️ Generar correos profesionales 
 - 🧠 Analizar información y extraer insights clave
 - 📝 Crear contenido personalizado según tus necesidades
 
@@ -34,6 +32,7 @@ Puedo combinar múltiples acciones en una sola petición:
 - "Busca el archivo presupuesto, léelo y envíamelo por correo"
 - "Resume el documento informe_trimestral y genera un email para mi equipo"
 - "Busca correos de Juan sobre proyecto y dame un resumen"
+- "Extaer información de un archivo y redactar un correo"
 
 ### 💬 CÓMO INTERACTUAR CONMIGO
 
@@ -42,14 +41,12 @@ Puedo combinar múltiples acciones en una sola petición:
 📧 **Correos:**
 - "Lista mis últimos 5 correos"
 - "Busca correos de juan@example.com sobre proyecto"
-- "Envía un correo motivacional a mi equipo"
-- "Lee el correo con ID abc123"
+- "Envía un correo a mi equipo"
 
 📁 **Documentos:**
 - "Resume el archivo llamado propuesta_proyecto"
 - "Busca documentos que contengan 'ventas'"
 - "Lee el contenido del archivo informe_Q1"
-- "Sube un documento llamado resumen con este contenido: ..."
 
 🔗 **Tareas combinadas:**
 - "Busca el archivo acta_reunion y envíamelo por correo"
@@ -58,10 +55,10 @@ Puedo combinar múltiples acciones en una sola petición:
 
 **💡 Consejo:** Sé específico en tus peticiones. Mientras más claro seas, mejor podré ayudarte.
 
-### 🚫 QUÉ NO PUEDO HACER (AÚN)
+### 🚫 QUÉ NO PUEDO HACER 
 
 - ❌ Modificar configuraciones de tu cuenta de Google
-- ❌ Acceder a archivos o correos sin tu autorización OAuth
+- ❌ Acceder a archivos o correos sin tu autorización 
 - ❌ Recordar conversaciones muy antiguas sin contexto
 - ❌ Ejecutar acciones que requieran autenticación de dos factores adicional
 """
@@ -74,10 +71,10 @@ Para que pueda acceder a tus servicios de Google, necesitas conectarlos primero:
 ### 📍 PASO 1: IR AL MENÚ APPS
 1. Busca el menú **"Apps"** en la esquina superior derecha de la pantalla
 2. Haz clic para ver la lista de aplicaciones disponibles
-3. Verás: Gmail, Google Drive y Calendar
+3. Verás: Gmail
 
 ### 🔌 PASO 2: CONECTAR APLICACIÓN
-1. Encuentra la aplicación que quieres conectar (Gmail, Drive, etc.)
+1. Encuentra la aplicación que quieres conectar (Gmail)
 2. Haz clic en el botón **"Conectar"** junto al nombre de la app
 3. Se abrirá una nueva ventana de Google pidiendo autorización
 
@@ -97,22 +94,19 @@ Para que pueda acceder a tus servicios de Google, necesitas conectarlos primero:
 **Tus datos están seguros:**
 - ✅ Solo accedo a lo que autorizas explícitamente
 - ✅ No almaceno tus contraseñas, solo tokens temporales
-- ✅ Puedes desconectar cualquier app en cualquier momento
-- ✅ Cada aplicación requiere autorización independiente
+- ✅ Puedes desconectar la app en cualquier momento
 - ✅ Los permisos son revocables desde tu cuenta de Google
 
 **¿Qué permisos solicito?**
 - **Gmail**: Leer, enviar y gestionar tus correos
-- **Drive**: Leer, crear y gestionar tus archivos
-- **Calendar**: Ver y crear eventos (próximamente)
 
-**💡 Nota importante:** Si desconectas una app, dejaré de poder usarla hasta que vuelvas a conectarla.
+**💡 Nota importante:** Si desconectas una app, no podre usarla hasta que vuelvas a conectarla.
 """
 
 TROUBLESHOOTING_GUIDE = """
 ## 🔧 SOLUCIÓN DE PROBLEMAS COMUNES
 
-### ❌ "No puedo conectar Gmail/Drive"
+### ❌ "No puedo conectar Gmail"
 
 **Posibles soluciones:**
 1. Verifica que estés usando una **cuenta de Google activa**
@@ -126,9 +120,7 @@ TROUBLESHOOTING_GUIDE = """
 **Verifica lo siguiente:**
 1. Revisa que la aplicación esté **conectada** (indicador verde ✅ en el menú Apps)
 2. Si está conectada pero falla, prueba **desconectar y reconectar**
-3. Algunas acciones requieren **múltiples apps**:
-   - Ejemplo: "Lee archivo y envíalo" necesita Drive Y Gmail conectados
-4. Si el problema persiste, **cierra sesión y vuelve a iniciar sesión**
+3. Si el problema persiste, **cierra sesión y vuelve a iniciar sesión**
 
 ### 🤔 "No sé cómo pedirte algo"
 
@@ -158,13 +150,13 @@ TROUBLESHOOTING_GUIDE = """
 **Si tarda más de 1 minuto:**
 - Algo probablemente falló
 - Prueba enviar el comando de nuevo
-- Si el error persiste, intenta una tarea más simple primero
+- Si el error persiste, intenta una tarea más tarde
 
 ### 🆘 "Sigo teniendo problemas"
 
 **Pasos de reinicio completo:**
 1. **Desconecta** todas las aplicaciones desde el menú Apps
-2. **Cierra sesión** de OptimusAgent
+2. **Cierra sesión** de AssistWork
 3. **Vuelve a iniciar sesión**
 4. **Reconecta** las aplicaciones que necesites
 5. **Prueba con un comando simple** como "Lista mis correos"
@@ -180,7 +172,6 @@ QUICK_START_GUIDE = """
 Antes de poder ayudarte, necesito que conectes las aplicaciones:
 - Ve al menú **"Apps"** (arriba a la derecha)
 - Conecta **Gmail** si quieres gestionar correos
-- Conecta **Drive** si trabajarás con documentos
 
 ### 2️⃣ PRUEBA CON ALGO SIMPLE
 Empieza con comandos básicos para familiarizarte:
@@ -198,7 +189,6 @@ Cuando te sientas cómodo, prueba combinaciones:
 - Sé específico en tus peticiones
 - Usa nombres exactos de archivos cuando los conozcas
 - Verás indicadores de progreso mientras trabajo
-- Puedes interrumpir enviando un nuevo mensaje
 
 ¿Listo para empezar? ¡Conéctame a tus apps y prueba tu primer comando! 🎉
 """
