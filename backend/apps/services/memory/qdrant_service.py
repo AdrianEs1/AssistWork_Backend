@@ -1,6 +1,6 @@
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance, PointStruct
 from qdrant_client.http.exceptions import ResponseHandlingException
+from qdrant_client.models import VectorParams, Distance, PointStruct, PayloadSchemaType
 from sentence_transformers import SentenceTransformer
 import uuid
 import time
@@ -25,7 +25,10 @@ def init_collection(max_retries=3):
     for attempt in range(max_retries):
         try:
             collections = client.get_collections().collections
-            if COLLECTION_NAME not in [c.name for c in collections]:
+            collection_exists = COLLECTION_NAME in [c.name for c in collections]
+            
+            if not collection_exists:
+                # Crear colección
                 client.create_collection(
                     collection_name=COLLECTION_NAME,
                     vectors_config=VectorParams(size=384, distance=Distance.COSINE)
@@ -33,11 +36,44 @@ def init_collection(max_retries=3):
                 print(f"✅ Colección '{COLLECTION_NAME}' creada en Qdrant")
             else:
                 print(f"ℹ️ Colección '{COLLECTION_NAME}' ya existe")
+            
+            # ← NUEVO: Crear índices para filtrado
+            try:
+                client.create_payload_index(
+                    collection_name=COLLECTION_NAME,
+                    field_name="user_id",
+                    field_schema=PayloadSchemaType.KEYWORD
+                )
+                print(f"✅ Índice 'user_id' creado/verificado")
+            except Exception as e:
+                print(f"ℹ️ Índice 'user_id' ya existe o error: {e}")
+            
+            try:
+                client.create_payload_index(
+                    collection_name=COLLECTION_NAME,
+                    field_name="conversation_id",
+                    field_schema=PayloadSchemaType.KEYWORD
+                )
+                print(f"✅ Índice 'conversation_id' creado/verificado")
+            except Exception as e:
+                print(f"ℹ️ Índice 'conversation_id' ya existe o error: {e}")
+            
+            try:
+                client.create_payload_index(
+                    collection_name=COLLECTION_NAME,
+                    field_name="role",
+                    field_schema=PayloadSchemaType.KEYWORD
+                )
+                print(f"✅ Índice 'role' creado/verificado")
+            except Exception as e:
+                print(f"ℹ️ Índice 'role' ya existe o error: {e}")
+            
             return True
+            
         except Exception as e:
             print(f"❌ Error inicializando Qdrant (intento {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)  # Backoff exponencial
+                time.sleep(2 ** attempt)
             else:
                 print("⚠️ No se pudo inicializar Qdrant. Continuando sin base vectorial.")
                 return False
@@ -71,16 +107,56 @@ def store_message(text, metadata=None, max_retries=3):
                 return None
 
 # --- Buscar contexto relevante con retry ---
-def search_context(query, limit=3, max_retries=3):
+def search_context(query, user_id=None, conversation_id=None, limit=10, score_threshold=0.5, max_retries=3):
+    """
+    Busca contexto relevante con filtros por usuario y conversación
+    
+    Args:
+        query: Texto de búsqueda
+        user_id: Filtrar por usuario específico
+        conversation_id: Filtrar por conversación específica
+        limit: Número máximo de resultados
+        score_threshold: Score mínimo de relevancia (0.0 - 1.0)
+        max_retries: Intentos de reconexión
+    
+    Returns:
+        Lista de textos relevantes
+    """
+    from qdrant_client.models import Filter, FieldCondition, MatchValue
+    
     for attempt in range(max_retries):
         try:
             query_vector = embedder.encode(query).tolist()
+            
+            # Construir filtros
+            conditions = []
+            
+            if user_id:
+                conditions.append(
+                    FieldCondition(key="user_id", match=MatchValue(value=user_id))
+                )
+            
+            if conversation_id:
+                conditions.append(
+                    FieldCondition(key="conversation_id", match=MatchValue(value=conversation_id))
+                )
+            
+            # Aplicar filtros solo si existen condiciones
+            query_filter = Filter(must=conditions) if conditions else None
+            
             results = client.search(
                 collection_name=COLLECTION_NAME,
                 query_vector=query_vector,
-                limit=limit
+                query_filter=query_filter,
+                limit=limit,
+                score_threshold=score_threshold
             )
-            return [hit.payload["text"] for hit in results]
+            
+            # Retornar solo textos con score suficiente
+            context_texts = [hit.payload["text"] for hit in results]
+            
+            print(f"✅ Contexto encontrado: {len(context_texts)} mensajes (threshold={score_threshold})")
+            return context_texts
             
         except (ResponseHandlingException, Exception) as e:
             print(f"❌ Error buscando en Qdrant (intento {attempt + 1}/{max_retries}): {e}")

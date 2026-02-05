@@ -200,8 +200,18 @@ async def websocket_endpoint(
                             conversation.title = title
                     
                     # 4.4 Buscar contexto
-                    context_list = search_context(user_message)
-                    context_text = "\n".join(context_list)
+                    # 4.4 Buscar contexto CON FILTROS
+                    context_list = search_context(
+                        query=user_message,
+                        user_id=str(current_user.id),           # ← Filtrar por usuario
+                        conversation_id=str(conversation.id),    # ← Filtrar por conversación
+                        limit=10,                                # ← Más contexto
+                        score_threshold=0.5                      # ← Solo mensajes relevantes
+                    )
+                    context_text = "\n".join(context_list) if context_list else ""
+
+                    # Log para debugging
+                    print(f"🔍 Contexto recuperado: {len(context_list)} mensajes")
                     
                     # 4.5 Definir callback para eventos del orquestador
                     async def event_callback(event_type: str, event_data: dict):
