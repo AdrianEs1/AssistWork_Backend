@@ -13,6 +13,9 @@ from apps.services.payments.subscription_service import (
 )
 from datetime import datetime, timedelta
 import uuid
+import hmac
+import hashlib
+import os
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
@@ -20,13 +23,27 @@ router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 @router.post("/mercadopago")
 async def mercadopago_webhook(request: Request):
     """
-    Recibe y procesa webhooks de Mercado Pago
+    Recibe y procesa webhooks de Mercado Pago con validación de firma
     """
     try:
         # Leer payload
+        body = await request.body()
         data = await request.json()
         
-        print(f"📨 Webhook Mercado Pago recibido: {data}")
+        # Obtener headers para validación
+        x_signature = request.headers.get("x-signature")
+        x_request_id = request.headers.get("x-request-id")
+        
+        print(f"📨 Webhook Mercado Pago recibido")
+        print(f"🔒 X-Signature: {x_signature}")
+        print(f"🆔 X-Request-ID: {x_request_id}")
+        
+        # Validar firma del webhook
+        if not verify_webhook_signature(body, x_signature, x_request_id):
+            print("❌ Firma de webhook inválida")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+        print("✅ Firma de webhook verificada")
         
         # Mercado Pago envía diferentes tipos de notificaciones
         notification_type = data.get("type")
@@ -64,18 +81,19 @@ async def mercadopago_webhook(request: Request):
             # Upgrade a Pro
             db = SessionLocal()
             try:
-                # Crear periodo de 30 días (Mercado Pago no tiene suscripciones automáticas por defecto)
+                # Crear periodo de 30 días
                 now = datetime.utcnow()
                 next_month = now + timedelta(days=30)
                 
                 upgrade_to_pro(
                     user_id=uuid.UUID(user_id),
-                    stripe_customer_id=payment_info["payer_email"],  # Email del pagador
-                    stripe_subscription_id=str(payment_info["id"]),  # ID del pago
+                    payment_customer_reference=payment_info.get("payer_email"),
+                    payment_transaction_id=str(payment_info["id"]),
                     current_period_start=now,
                     current_period_end=next_month,
                     db=db
                 )
+
                 
                 print(f"✅ Usuario {user_id} actualizado a Pro (Mercado Pago)")
                 
@@ -99,8 +117,80 @@ async def mercadopago_webhook(request: Request):
         
         return {"status": "success"}
     
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Error procesando webhook de Mercado Pago: {e}")
         import traceback
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
+
+
+def verify_webhook_signature(payload: bytes, x_signature: str, x_request_id: str) -> bool:
+    """
+    Verifica la firma del webhook de Mercado Pago
+    
+    Args:
+        payload: Cuerpo del webhook (bytes)
+        x_signature: Header X-Signature
+        x_request_id: Header X-Request-ID
+    
+    Returns:
+        True si la firma es válida, False si no
+    """
+    from config import MERCADOPAGO_WEBHOOK_KEY_PROD
+    webhook_secret = MERCADOPAGO_WEBHOOK_KEY_PROD
+    
+    if not webhook_secret:
+        print("⚠️ MERCADOPAGO_WEBHOOK_SECRET no configurado")
+        # En desarrollo puedes permitir webhooks sin validación
+        # En producción SIEMPRE debe estar configurado
+        return True  # ← Cambiar a False en producción
+    
+    if not x_signature or not x_request_id:
+        print("⚠️ Headers X-Signature o X-Request-ID faltantes")
+        return False
+    
+    try:
+        # Extraer ts y v1 del header X-Signature
+        # Formato: "ts=1234567890,v1=hash_value"
+        parts = {}
+        for part in x_signature.split(","):
+            key, value = part.split("=")
+            parts[key] = value
+        
+        ts = parts.get("ts")
+        v1_hash = parts.get("v1")
+        
+        if not ts or not v1_hash:
+            print("⚠️ X-Signature mal formado")
+            return False
+        
+        # Construir string para validar
+        # Formato: id:{request_id};request-id:{request_id};ts:{timestamp};
+        manifest = f"id:{x_request_id};request-id:{x_request_id};ts:{ts};"
+        
+        # Calcular HMAC SHA256
+        hmac_obj = hmac.new(
+            webhook_secret.encode('utf-8'),
+            manifest.encode('utf-8'),
+            hashlib.sha256
+        )
+        
+        computed_hash = hmac_obj.hexdigest()
+        
+        # Comparar hashes
+        is_valid = hmac.compare_digest(computed_hash, v1_hash)
+        
+        if is_valid:
+            print(f"✅ Firma válida")
+        else:
+            print(f"❌ Firma inválida")
+            print(f"   Esperado: {v1_hash}")
+            print(f"   Calculado: {computed_hash}")
+        
+        return is_valid
+    
+    except Exception as e:
+        print(f"❌ Error validando firma: {e}")
+        return False

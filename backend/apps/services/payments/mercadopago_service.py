@@ -7,11 +7,13 @@ import mercadopago
 import os
 from typing import Dict, Optional
 from datetime import datetime
+from config import MERCADOPAGO_ACCESS_TOKENPROD, FRONTEND_URL, BACKEND_URL
+
 
 # Configuración
-ACCESS_TOKEN = os.getenv("MERCADOPAGO_ACCESS_TOKEN")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:5000")
+ACCESS_TOKEN = MERCADOPAGO_ACCESS_TOKENPROD
+FRONTEND_URL = FRONTEND_URL
+BACKEND_URL = BACKEND_URL
 
 # Inicializar SDK
 sdk = mercadopago.SDK(ACCESS_TOKEN)
