@@ -1,8 +1,8 @@
-from apps.api import oauth
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from config import lifespan, logger
-from apps.api import auth, call_model, conversations, ws_chat, agentcontext
+from apps.api import auth, call_model, conversations, ws_chat, agentcontext, oauth, payments, mercadopago_webhook
 
 app = FastAPI(
     title="Agente IA API",
@@ -35,6 +35,8 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(oauth.router, prefix="/api")
 app.include_router(conversations.router, prefix="/api")
 app.include_router(agentcontext.router, prefix="/api")
+app.include_router(payments.router, prefix="/api")
+app.include_router(mercadopago_webhook.router, prefix="/api")
 
 @app.get("/health")
 async def health_check():

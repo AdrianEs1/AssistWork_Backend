@@ -13,6 +13,7 @@ from apps.models.message import Message
 from apps.models.agent_action import AgentAction
 from apps.models.email_verification import EmailVerification
 from apps.models.context_file import ContextFile
+from apps.models.subscription import Subscription, UsageLimits
 
 # this is the Alembic Config object
 config = context.config

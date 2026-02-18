@@ -18,6 +18,11 @@ from apps.services.orchestrator.orchestrator_service import orchestrator
 from apps.services.conversation.conversation_service import conversation_service
 #from apps.services.qdrant_service import search_context, store_message
 from apps.services.memory.qdrant_service import store_message, search_context
+from apps.middleware.subscription_middleware import (
+    check_conversation_limit,
+    record_conversation_usage,
+    SubscriptionLimitError
+)
 
 router = APIRouter()
 
@@ -167,6 +172,35 @@ async def websocket_endpoint(
                     {"message": "El mensaje no puede estar vacío"}
                 )
                 continue
+
+            # ← NUEVO: Verificar límites de suscripción ANTES de procesar
+            try:
+                limit_check = check_conversation_limit(current_user.id, db)
+                
+                # Si hay advertencia, enviarla al usuario
+                if limit_check.get("conversations_remaining") and limit_check["conversations_remaining"] <= 3:
+                    await manager.send_event(
+                        str(current_user.id),
+                        session_id,
+                        "warning",
+                        {
+                            "message": f"⚠️ Te quedan {limit_check['conversations_remaining']} conversaciones. Considera hacer upgrade.",
+                            "upgrade_url": "/pricing"
+                        }
+                    )
+
+            except SubscriptionLimitError as e:
+                await manager.send_event(
+                    str(current_user.id),
+                    session_id,
+                    "error",
+                    {
+                        "message": e.message,
+                        "upgrade_required": e.upgrade_required,
+                        "upgrade_url": "/pricing" if e.upgrade_required else None
+                    }
+                )
+                continue
             
             # === 4. Procesar mensaje ===
             try:
@@ -260,6 +294,8 @@ async def websocket_endpoint(
                     
                     # 4.10 Refrescar conversación
                     db.refresh(conversation)
+
+                    record_conversation_usage(current_user.id, db)
                     
                     # 4.11 Enviar evento final
                     await manager.send_event(

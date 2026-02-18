@@ -128,7 +128,7 @@ def send_reset_email(to_email: str, reset_link: str):
                         <tr>
                             <td style="padding:16px; text-align:center;
                                        background:#f9fafb; font-size:11px; color:#9ca3af;">
-                                © {datetime.utcnow().year} OptimusAgent<br/>
+                                © {datetime.utcnow().year} AssistWork<br/>
                                 Seguridad y privacidad primero.
                             </td>
                         </tr>
@@ -197,7 +197,7 @@ def send_delete_account_email(to_email: str, delete_link: str):
     send_email(to_email, subject, html_content)
 
 def send_verification_email(to_email: str, code: str):
-    subject = "Activa tu cuenta en OptimusAgent"
+    subject = "Activa tu cuenta en AssistWork"
     
     html_content = f"""
     <h2>Verificación de cuenta</h2>

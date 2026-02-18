@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from apps.models.conversation import Conversation
 from apps.database import SessionLocal
 from apps.models.context_file import ContextFile
+from apps.services.storage.gcs_service import download_to_memory, file_exists
+from io import BytesIO
 import os
 import mimetypes
 import fitz  # PyMuPDF
@@ -77,12 +79,13 @@ def list_files(
         all_files: List[ContextFile] = files_query.all()
 
         # Mapear a dicts para compatibilidad con el frontend
+        # Cambiar esta línea:
         all_files_dict = [
             {
-                "path": f.path,
+                "path": f.gcs_path,  # ← CAMBIO: antes era f.path
                 "name": f.name,
-                "mimeType": f.mine_type,
-                "source": "local"
+                "mimeType": f.mime_type,  # ← CAMBIO: antes era f.mine_type
+                "source": "cloud"  # ← CAMBIO: antes era "local"
             }
             for f in all_files
         ]
@@ -199,66 +202,97 @@ def read_file(
     **kwargs
 ):
     """
-    Lee el contenido de un archivo local.
+    Lee el contenido de un archivo desde GCS.
     Compatible con orquestador que envía `file_id`.
     """
-
-    file_path = path or file_id
-
+    
+    gcs_path = path or file_id
+    
+    db: Session = SessionLocal()
     try:
-        if not file_path or not os.path.exists(file_path):
+        # Buscar archivo en BD
+        context_file = db.query(ContextFile).filter(
+            ContextFile.user_id == user_id,
+            ContextFile.gcs_path == gcs_path
+        ).first()
+        
+        if not context_file:
             return {
                 "success": False,
-                "message": "❌ El archivo no existe o no es accesible en el sistema local."
+                "message": "❌ El archivo no existe o no tienes acceso."
             }
-
-        mime_type, _ = mimetypes.guess_type(file_path)
+        
+        # Verificar que existe en GCS
+        if not file_exists(gcs_path):
+            return {
+                "success": False,
+                "message": "❌ El archivo no está disponible en el almacenamiento."
+            }
+        
+        # Descargar de GCS a memoria
+        file_bytes = download_to_memory(gcs_path)
+        
+        # Leer contenido según tipo MIME
         content = ""
-
+        mime_type = context_file.mime_type
+        
         if mime_type == "application/pdf":
-            with fitz.open(file_path) as doc:
+            # Leer PDF desde memoria
+            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
                 content = "\n".join(page.get_text("text") for page in doc)
-
+        
         elif mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            document = docx.Document(file_path)
+            # Leer DOCX desde memoria
+            document = docx.Document(file_bytes)
             content = "\n".join(p.text for p in document.paragraphs if p.text.strip())
-
+        
         else:
-            with open(file_path, "r", errors="ignore") as f:
-                content = f.read()
-
+            # Leer texto plano
+            content = file_bytes.read().decode("utf-8", errors="ignore")
+        
+        # Parámetros de visualización
         preview_length = kwargs.get("preview_length", 500)
         show_full = kwargs.get("show_full", False)
-
+        
         user_message = (
-            "📄 **Archivo local leído exitosamente**\n\n"
-            f"📝 **Nombre:** {os.path.basename(file_path)}\n"
+            "📄 **Archivo leído exitosamente**\n\n"
+            f"📝 **Nombre:** {context_file.name}\n"
             f"📋 **Tipo:** {mime_type}\n"
-            f"📊 **Tamaño:** {len(content)} caracteres\n"
-            f"📍 **Ruta:** `{file_path}`\n\n"
+            f"📊 **Tamaño:** {context_file.file_size} bytes ({len(content)} caracteres de texto)\n"
+            f"☁️ **Almacenamiento:** Google Cloud Storage\n\n"
         )
-
+        
         if show_full or len(content) <= preview_length:
             user_message += f"📄 **Contenido:**\n```\n{content}\n```"
         else:
             user_message += f"📄 **Contenido:**\n```\n{content[:preview_length]}...\n```\n\n*(Vista previa truncada)*"
-
+        
         return {
             "success": True,
-            "file_name": os.path.basename(file_path),
+            "file_name": context_file.name,
             "mime_type": mime_type,
             "content": content,
             "content_length": len(content),
             "content_preview": content[:preview_length],
             "message": user_message
         }
-
+    
+    except FileNotFoundError as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": f"❌ **Archivo no encontrado en almacenamiento**\n\n{str(e)}"
+        }
+    
     except Exception as e:
         return {
             "success": False,
             "error": str(e),
-            "message": f"❌ **Error leyendo archivo local**\n\n🚫 {str(e)}"
+            "message": f"❌ **Error leyendo archivo**\n\n🚫 {str(e)}"
         }
+    
+    finally:
+        db.close()
 
 
 # -------------------------------------------------

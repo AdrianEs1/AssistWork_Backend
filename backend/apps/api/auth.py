@@ -13,6 +13,7 @@ from apps.schemas.auth import UserRegister, UserLogin, Token, TokenRefresh, User
 from apps.models.user import User
 from datetime import datetime, timedelta
 from apps.core.send_email import send_reset_email, send_delete_account_email, send_verification_email
+from apps.services.payments.subscription_service import create_trial_subscription
 from config import FRONTEND_URL
 MIN_WAIT = timedelta(minutes=2)
 MAX_ATTEMPTS = 5
@@ -47,6 +48,9 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    # ← NUEVO: Crear suscripción trial de 7 días
+    create_trial_subscription(new_user.id, db)
 
     # 2️⃣ crear verificación
     code = create_email_verification(new_user.id, db)
