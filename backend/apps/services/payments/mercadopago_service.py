@@ -51,6 +51,10 @@ def create_subscription_preference(user_id: str, email: str, plan: str = "pro") 
             "payer": {
                 "email": email
             },
+            "payment_methods": {
+                "installments": 1,
+                "default_installments": 1
+            },
             "back_urls": {
                 "success": f"{FRONTEND_URL}/pricing?success=true",
                 "failure": f"{FRONTEND_URL}/pricing?failure=true",
