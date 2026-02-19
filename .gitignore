@@ -29,7 +29,7 @@ htmlcov/
 .dmypy.json
 .pickle
 dmypy.json
-storage/
+
 
 
 # ====================================
