@@ -42,8 +42,8 @@ class IntelligentContext:
         user_input: str
     ) -> dict:
         """
-        Resuelve todos los argumentos marcados como 'dynamic' usando una sola llamada al LLM.
-        Retorna un dict SOLO con los parámetros resueltos.
+        Resuelve todos los argumentos marcados como 'dynamic' usando el contador
+        para IDs y el LLM para parámetros semánticos.
         """
 
         # Detectar parámetros dinámicos
@@ -58,7 +58,28 @@ class IntelligentContext:
         if not hasattr(self, 'llm_service') or self.llm_service is None:
             raise RuntimeError("LLM service no está conectado al contexto")
 
-        # Resumen del contexto (NO todo, solo lo útil)
+        resolved = {}
+        remaining_dynamic = {}
+
+        # ✅ PASO 1: Resolver IDs con el contador secuencial (sin LLM)
+        for param_name in dynamic_params:
+            if param_name.endswith("_id"):
+                id_value = self._resolve_id_parameter(param_name)
+                if id_value is not None:
+                    print(f"✅ '{param_name}' resuelto por contador: {id_value}")
+                    resolved[param_name] = id_value
+                else:
+                    print(f"⚠️ '{param_name}' no pudo resolverse por contador, pasando al LLM")
+                    remaining_dynamic[param_name] = "dynamic"
+            else:
+                remaining_dynamic[param_name] = "dynamic"
+
+        # ✅ PASO 2: Si no quedan parámetros para el LLM, retornar directo
+        if not remaining_dynamic:
+            print(f"🎯 Todos los parámetros resueltos por contador: {resolved}")
+            return resolved
+
+        # ✅ PASO 3: Solo ir al LLM para parámetros semánticos (body, subject, to, etc.)
         context_snapshot = {
             k: v for k, v in self.data.items()
             if any(
@@ -74,7 +95,6 @@ class IntelligentContext:
             preview = str(v)
             print(f"  - {k}: {preview[:200]}{'...' if len(preview) > 200 else ''}")
 
-
         prompt = f"""
         Eres un resolvedor de argumentos para un orquestador de acciones.
 
@@ -84,7 +104,7 @@ class IntelligentContext:
         - Devuelve SOLO un JSON válido
         - NO incluyas explicaciones
         - NO incluyas texto fuera del JSON
-        - Para los correos utiliza la información correcta para remplazar los valores de to, subject, body
+        - Para los correos utiliza la información correcta para reemplazar los valores de to, subject, body
         - NO inventes claves
         - USA EXCLUSIVAMENTE las claves listadas en "Parámetros a resolver"
         - Si no puedes resolver un valor con certeza, usa null
@@ -93,7 +113,7 @@ class IntelligentContext:
         {method_name}
 
         Parámetros a resolver (estas son las ÚNICAS claves permitidas):
-        {list(dynamic_params.keys())}
+        {list(remaining_dynamic.keys())}
 
         Contexto disponible:
         {context_snapshot}
@@ -128,19 +148,20 @@ class IntelligentContext:
         Devuelve el JSON final ahora.
         """
 
-
         try:
             from apps.services.llm.llm_service import call_llm
             raw_response = await call_llm(prompt)
 
-            # Parseo estricto
             import json
-            resolved_args = json.loads(raw_response)
+            llm_resolved = json.loads(raw_response)
+            print("Estamos en resolver dynamic arguments with LLM")
 
-            if not isinstance(resolved_args, dict):
+            if not isinstance(llm_resolved, dict):
                 raise ValueError("El LLM no devolvió un objeto JSON")
 
-            return resolved_args
+            # ✅ PASO 4: Combinar lo resuelto por contador + lo resuelto por LLM
+            resolved.update(llm_resolved)
+            return resolved
 
         except Exception as e:
             raise RuntimeError(

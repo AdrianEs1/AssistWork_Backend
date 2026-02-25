@@ -253,12 +253,15 @@ async def execute_method_sequence(
 
         print(f"🔧 Paso {i + 1}: Ejecutando {step_tool_name}.{method_name}")
 
+        print(f"Esto es lo que contiene el method_name Y method_args, los cuales se pasan al LLM(execute_method_secuence){method_args, method_name}")
+
         # 🔥 1️⃣ RESOLVER DYNAMIC CON LLM (UNA SOLA VEZ)
         dynamic_llm_args = await context.resolve_dynamic_arguments_with_llm(
             method_name=method_name,
             args=method_args,
             user_input=user_input
         )
+        print(f"Estos son los DYNAMIC Resultos en LLM: EXECUTE_METHOD_SECUENCE EN execute_complex_flow {dynamic_llm_args}")
 
         # 🔥 2️⃣ CONSTRUIR ARGUMENTOS FINALES
         resolved_args = {}

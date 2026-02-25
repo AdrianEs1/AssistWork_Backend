@@ -14,6 +14,7 @@ class ContextFile(Base):
     mime_type = Column(String(100), nullable=False)  # ← Corregido (antes: mine_type)
     file_size = Column(Integer, nullable=False)       # ← NUEVO
     gcs_path = Column(String(500), nullable=False)    # ← NUEVO
+    file_hash = Column(String(64), index=True)
     created_at = Column(DateTime, default=datetime.utcnow)  # ← NUEVO
     
     # path = Column(String(500))  # ← ELIMINAR

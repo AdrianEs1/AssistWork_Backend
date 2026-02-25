@@ -12,12 +12,29 @@ import os
 import base64
 import json
 import uuid
+import re
 from config import GCS_BUCKET_NAME, GOOGLE_APPLICATION_CREDENTIALS
 
 # Configuración
 BUCKET_NAME = GCS_BUCKET_NAME
 CREDENTIALS_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 CREDENTIALS_BASE64 = GOOGLE_APPLICATION_CREDENTIALS
+
+
+
+def sanitize_filename(name: str) -> str:
+    """
+    Limpia nombre de archivo para evitar caracteres peligrosos
+    """
+    name = os.path.basename(name)
+    name = re.sub(r"[^a-zA-Z0-9._-]", "_", name)
+    return name
+
+def validate_pdf(file_content: bytes) -> bool:
+    """
+    Verifica que el archivo sea realmente un PDF usando magic bytes
+    """
+    return file_content.startswith(b"%PDF")
 
 # Inicializar cliente GCS
 def get_storage_client():
@@ -57,52 +74,47 @@ storage_client = get_storage_client()
 bucket = storage_client.bucket(BUCKET_NAME)
 
 
-
-
-def upload_file(file_content: bytes, user_id: str, original_filename: str) -> dict:
+def upload_file(file_content: bytes, user_id: str, original_filename: str, file_hash: str = None) -> dict:
     """
-    Sube un archivo a GCS y retorna metadata
-    
-    Args:
-        file_content: Contenido del archivo en bytes
-        user_id: ID del usuario
-        original_filename: Nombre original del archivo
-    
-    Returns:
-        {
-            "gcs_path": "users/{user_id}/documents/file-uuid.pdf",
-            "file_size": 12345,
-            "success": True
-        }
+    Sube un archivo a GCS usando un hash para evitar duplicados físicos.
     """
     try:
-        # Generar nombre único
-        file_extension = os.path.splitext(original_filename)[1]
-        unique_id = str(uuid.uuid4())[:8]
-        filename = f"{os.path.splitext(original_filename)[0]}-{unique_id}{file_extension}"
+        safe_name = sanitize_filename(original_filename)
+        file_extension = os.path.splitext(safe_name)[1].lower()
         
-        # Path en GCS
+        # Si no hay hash, usamos UUID (comportamiento anterior)
+        # Si hay hash, el nombre es único por contenido
+        unique_name = file_hash if file_hash else str(uuid.uuid4())
+        filename = f"{unique_name}{file_extension}"
+        
         gcs_path = f"users/{user_id}/documents/{filename}"
-        
-        # Subir archivo
         blob = bucket.blob(gcs_path)
+
+        # OPTIMIZACIÓN: Si el archivo ya existe físicamente en GCS, no lo resubas
+        if blob.exists():
+            print(f"ℹ️ Archivo ya existe en GCS, omitiendo subida: {gcs_path}")
+            return {
+                "success": True,
+                "gcs_path": gcs_path,
+                "file_size": len(file_content),
+                "already_existed": True
+            }
+
+        # Subir archivo
         blob.upload_from_string(file_content, content_type="application/pdf")
         
-        print(f"✅ Archivo subido a GCS: {gcs_path}")
-        
+        print(f"✅ Nuevo archivo subido a GCS: {gcs_path}")
         return {
             "success": True,
             "gcs_path": gcs_path,
-            "file_size": len(file_content)
+            "file_size": len(file_content),
+            "already_existed": False
         }
     
     except Exception as e:
         print(f"❌ Error subiendo a GCS: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
+        return {"success": False, "error": str(e)}
+    
 
 def download_to_memory(gcs_path: str) -> BytesIO:
     """
