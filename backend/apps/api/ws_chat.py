@@ -145,30 +145,32 @@ async def websocket_endpoint(
             except json.JSONDecodeError:
                 await manager.send_event(
                     str(current_user.id),
-                    "error",
+                    "completed",
                     {"message": "Formato JSON inválido"}
                 )
                 continue
+
+            session_id = message_data.get("session_id")  # ← NUEVO
             
             # Validar tipo de mensaje
             if message_data.get("type") != "chat":
                 await manager.send_event(
                 str(current_user.id),
                 session_id,  # ← AGREGAR
-                "error",
+                "completed",
                 {"message": f"Tipo de mensaje no soportado: {message_data.get('type')}"}
             )
                 continue
             
             user_message = message_data.get("message", "").strip()
             conversation_id = message_data.get("conversation_id")
-            session_id = message_data.get("session_id")  # ← NUEVO
+            
 
             if not user_message:
                 await manager.send_event(
                     str(current_user.id),
                     session_id,  # ← NUEVO
-                    "error",
+                    "completed",
                     {"message": "El mensaje no puede estar vacío"}
                 )
                 continue
@@ -182,7 +184,7 @@ async def websocket_endpoint(
                     await manager.send_event(
                         str(current_user.id),
                         session_id,
-                        "warning",
+                        "completed",
                         {
                             "message": f"⚠️ Te quedan {limit_check['conversations_remaining']} conversaciones. Considera hacer upgrade.",
                             "upgrade_url": "/pricing"
@@ -193,7 +195,7 @@ async def websocket_endpoint(
                 await manager.send_event(
                     str(current_user.id),
                     session_id,
-                    "error",
+                    "completed",
                     {
                         "message": e.message,
                         "upgrade_required": e.upgrade_required,

@@ -47,7 +47,7 @@ def check_conversation_limit(user_id: uuid.UUID, db: Session) -> dict:
     usage = get_user_usage(user_id, db)
     
     if not subscription or not usage:
-        raise SubscriptionLimitError("Subscription no encontrada")
+        raise SubscriptionLimitError("No tienes una susbcripción activa, para continuar actualiza a Pro")
     
     # Verificar si el trial expiró
     if check_trial_expired(subscription):
