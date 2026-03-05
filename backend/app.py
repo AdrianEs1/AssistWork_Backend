@@ -2,11 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import lifespan, logger
-from apps.api import auth, call_model, conversations, ws_chat, agentcontext, oauth, payments, mercadopago_webhook
+from apps.api import auth, call_model, conversations, ws_chat, agentcontext, oauth, payments, mercadopago_webhook, sse_chat
 
 app = FastAPI(
     title="Agente IA API",
-    description="API para Agente de IA con soporte REST y WebSocket",
+    description="API para Agente de IA con soporte REST y SSE",
     version="2.0.0",
     lifespan=lifespan
 )
@@ -37,6 +37,7 @@ app.include_router(conversations.router, prefix="/api")
 app.include_router(agentcontext.router, prefix="/api")
 app.include_router(payments.router, prefix="/api")
 app.include_router(mercadopago_webhook.router, prefix="/api")
+app.include_router(sse_chat.router)
 
 @app.get("/health")
 async def health_check():

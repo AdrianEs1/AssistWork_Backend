@@ -67,14 +67,15 @@ async def orchestrator(user_input: str, user_id: str = None, context: str = "", 
     decision_prompt = get_decision_prompt(user_input, context, available_tools)
 
 
-    decision_text = await call_llm(decision_prompt)
-    print(f"🤖 Decisión de Gemini en Clasificación de accion: {decision_text}")
-
     # Emitir evento: Analizando
     if event_callback:
         await event_callback("analyzing", {
             "message": "Analizando tu petición..."
         })
+    decision_text = await call_llm(decision_prompt)
+    print(f"🤖 Decisión de Gemini en Clasificación de accion: {decision_text}")
+
+    
 
     try:
         decision = json.loads(decision_text)
