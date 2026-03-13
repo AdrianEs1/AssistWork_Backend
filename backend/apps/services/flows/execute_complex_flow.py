@@ -28,8 +28,10 @@ async def plan_method_sequence(tools: Union[str, List[str]], methods: List[Dict]
 
     try:
         plan = json.loads(plan_text)
-        sequence = plan.get("sequence", [])
 
+        sequence = plan.get("sequence", [])
+        
+        
         # 🔹 3️⃣ Validar métodos solo cuando haya UNA herramienta
         if len(tool_list) == 1:
             valid_method_names = {method['name'] for method in methods}
@@ -484,4 +486,3 @@ async def execute_llm_step(step: dict, context: IntelligentContext, user_input: 
         error_msg = f"Error en procesamiento LLM: {str(e)}"
         print(f"❌ {error_msg}")
         return {"success": False, "error": error_msg}
-    

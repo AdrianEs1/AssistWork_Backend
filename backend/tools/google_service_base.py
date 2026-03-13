@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from apps.database import SessionLocal
 from apps.models.oauth_connection import OAuthConnection
 from abc import ABC, abstractmethod
+from apps.models.user import User
 
 
 class GoogleServiceBase(ABC):

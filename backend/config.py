@@ -68,3 +68,18 @@ MERCADOPAGO_PUBLIC_KEY= os.getenv("MERCADOPAGO_PUBLIC_KEY")
 MERCADOPAGO_WEBHOOK_KEY_PROD= os.getenv("MERCADOPAGO_WEBHOOK_KEY_PROD")
 MERCADOPAGO_ACCESS_TOKENPROD= os.getenv("MERCADOPAGO_ACCESS_TOKENPROD")
 MERCADOPAGO_PUBLIC_KEYPROD= os.getenv("MERCADOPAGO_PUBLIC_KEYPROD")
+
+
+
+# Determinar el entorno (puedes cambiarlo a "production" cuando lances)
+ENV = os.getenv("APP_ENV", "development")
+
+MCP_CONFIG = {
+    "gmail": {
+        "development": {
+            "command": "python",
+            "args": ["-m", "mcp_Server.GMAIL_ServerMCP"]
+        },
+        "production": "https://mcp-gmail.assistwork.ai/sse" # URL futura para producción
+    }
+}

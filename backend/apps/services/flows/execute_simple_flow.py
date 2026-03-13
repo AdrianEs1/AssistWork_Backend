@@ -6,7 +6,7 @@ from apps.services.prompt.prompt_base import build_prompt
 
 
 async def select_simple_method(tool_name: str, methods: List[Dict], user_input: str):
-    """Selecciona método simple usando Groq con mejor lógica"""
+    """Selecciona método simple con mejor lógica"""
     
 
     planning_prompt = build_prompt(tool_name, methods, user_input, task_type="simple")

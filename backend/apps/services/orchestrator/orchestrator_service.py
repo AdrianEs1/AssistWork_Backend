@@ -276,9 +276,9 @@ Primero necesitas conectar {tools_list}.\n\n
     
     action = actions[0] if actions else None
 
-    if task_type == "simple":
+    """if task_type == "simple":
         # Groq selecciona método simple
-        selection = await select_simple_method(action, methods, user_input)
+        selection = await plan_method_sequence(action, methods, user_input, task_type)
         
         if "error" in selection:
             return {
@@ -287,9 +287,9 @@ Primero necesitas conectar {tools_list}.\n\n
                 "error": f"[ORCH] Error en selección simple: {selection['error']}"
             }
         
-        sequence = [selection]
+        sequence = [selection]"""
         
-    elif task_type in ["complex", "multi_tool"]:
+    if task_type in ["complex", "multi_tool"]:
     # ✅ Adaptar para soportar una o varias herramientas
         
         sequence = await plan_method_sequence(action, methods, user_input, task_type)
@@ -421,20 +421,7 @@ Primero necesitas conectar {tools_list}.\n\n
                 # Si no se encuentra la clave, fallback
                 response_message = f"✅ Ejecutado {method_name} correctamente"
 
-    """# Para secuencias multi-tool, agregar info de la secuencia
-    successful_methods = []
-    for r in results:
-        if r.get("success", False):
-            if "method" in r:
-                successful_methods.append(r["method"])
-            elif r.get("type") == "llm":
-                successful_methods.append("llm_processing")
-            elif r.get("type") == "iteration":
-                successful_methods.append(f"{r.get('method', 'unknown')}_iteration")
-
-    if len(successful_methods) > 1:
-        sequence_info = f"\n\n📊 **Secuencia completada:** {' → '.join(successful_methods)}"
-        response_message += sequence_info"""
+    
 
     # Emitir evento: Guardando
     if event_callback:

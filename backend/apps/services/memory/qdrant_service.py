@@ -6,70 +6,84 @@ import uuid
 import time
 from config import QDRANT_API_KEY, QDRANT_URL, QDRANT_COLLECTION_NAME
 
-# -- Configuracion Qdrant --
 COLLECTION_NAME = QDRANT_COLLECTION_NAME
+VECTOR_SIZE = 384
 
-# Cliente Qdrant con timeout y retry
 client = QdrantClient(
-    url=QDRANT_URL, 
+    url=QDRANT_URL,
     api_key=QDRANT_API_KEY,
-    timeout=30,  # Timeout de 30 segundos
-    prefer_grpc=False  # Usar HTTP en lugar de gRPC si hay problemas
+    timeout=30,
+    prefer_grpc=False
 )
 
-# Modelo de embeddings local (gratis)
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# --- Inicializar colección con retry ---
+
+# --- Validar que la colección tiene la config correcta ---
+def _is_collection_config_valid() -> bool:
+    """Verifica que la colección existe y tiene vectores regulares de tamaño correcto."""
+    try:
+        info = client.get_collection(COLLECTION_NAME)
+        vectors_config = info.config.params.vectors
+
+        # Si es dict → es multi-vector (configuración incorrecta)
+        if isinstance(vectors_config, dict):
+            print(f"⚠️ Colección '{COLLECTION_NAME}' tiene configuración multi-vector. Debe recrearse.")
+            return False
+
+        # Si el tamaño no coincide → configuración incorrecta
+        if vectors_config.size != VECTOR_SIZE:
+            print(f"⚠️ Colección '{COLLECTION_NAME}' tiene size={vectors_config.size}, esperado={VECTOR_SIZE}. Debe recrearse.")
+            return False
+
+        return True
+
+    except Exception as e:
+        print(f"⚠️ No se pudo verificar config de colección: {e}")
+        return False
+
+
+# --- Inicializar colección con retry y validación ---
 def init_collection(max_retries=3):
     for attempt in range(max_retries):
         try:
             collections = client.get_collections().collections
             collection_exists = COLLECTION_NAME in [c.name for c in collections]
-            
+
+            if collection_exists:
+                if _is_collection_config_valid():
+                    print(f"ℹ️ Colección '{COLLECTION_NAME}' ya existe y su configuración es correcta")
+                else:
+                    # Config inválida → recrear
+                    print(f"🗑️ Recreando colección '{COLLECTION_NAME}' por configuración incompatible...")
+                    client.delete_collection(COLLECTION_NAME)
+                    collection_exists = False
+
             if not collection_exists:
-                # Crear colección
                 client.create_collection(
                     collection_name=COLLECTION_NAME,
-                    vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+                    vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE)
                 )
                 print(f"✅ Colección '{COLLECTION_NAME}' creada en Qdrant")
-            else:
-                print(f"ℹ️ Colección '{COLLECTION_NAME}' ya existe")
-            
-            # ← NUEVO: Crear índices para filtrado
-            try:
-                client.create_payload_index(
-                    collection_name=COLLECTION_NAME,
-                    field_name="user_id",
-                    field_schema=PayloadSchemaType.KEYWORD
-                )
-                print(f"✅ Índice 'user_id' creado/verificado")
-            except Exception as e:
-                print(f"ℹ️ Índice 'user_id' ya existe o error: {e}")
-            
-            try:
-                client.create_payload_index(
-                    collection_name=COLLECTION_NAME,
-                    field_name="conversation_id",
-                    field_schema=PayloadSchemaType.KEYWORD
-                )
-                print(f"✅ Índice 'conversation_id' creado/verificado")
-            except Exception as e:
-                print(f"ℹ️ Índice 'conversation_id' ya existe o error: {e}")
-            
-            try:
-                client.create_payload_index(
-                    collection_name=COLLECTION_NAME,
-                    field_name="role",
-                    field_schema=PayloadSchemaType.KEYWORD
-                )
-                print(f"✅ Índice 'role' creado/verificado")
-            except Exception as e:
-                print(f"ℹ️ Índice 'role' ya existe o error: {e}")
-            
+
+            # Crear índices para filtrado
+            for field, schema in [
+                ("user_id", PayloadSchemaType.KEYWORD),
+                ("conversation_id", PayloadSchemaType.KEYWORD),
+                ("role", PayloadSchemaType.KEYWORD),
+            ]:
+                try:
+                    client.create_payload_index(
+                        collection_name=COLLECTION_NAME,
+                        field_name=field,
+                        field_schema=schema
+                    )
+                    print(f"✅ Índice '{field}' creado/verificado")
+                except Exception as e:
+                    print(f"ℹ️ Índice '{field}' ya existe o error: {e}")
+
             return True
-            
+
         except Exception as e:
             print(f"❌ Error inicializando Qdrant (intento {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
@@ -78,13 +92,14 @@ def init_collection(max_retries=3):
                 print("⚠️ No se pudo inicializar Qdrant. Continuando sin base vectorial.")
                 return False
 
+
 # --- Guardar texto en Qdrant con retry ---
 def store_message(text, metadata=None, max_retries=3):
     for attempt in range(max_retries):
         try:
             vector = embedder.encode(text).tolist()
             point_id = str(uuid.uuid4())
-            
+
             client.upsert(
                 collection_name=COLLECTION_NAME,
                 points=[
@@ -97,53 +112,32 @@ def store_message(text, metadata=None, max_retries=3):
             )
             print(f"✅ Mensaje guardado en Qdrant: {point_id}")
             return point_id
-            
+
         except (ResponseHandlingException, Exception) as e:
             print(f"❌ Error guardando en Qdrant (intento {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
-                time.sleep(1)  # Esperar 1 segundo antes del retry
+                time.sleep(1)
             else:
                 print("⚠️ No se pudo guardar en Qdrant. Continuando sin almacenar.")
                 return None
 
+
 # --- Buscar contexto relevante con retry ---
 def search_context(query, user_id=None, conversation_id=None, limit=10, score_threshold=0.5, max_retries=3):
-    """
-    Busca contexto relevante con filtros por usuario y conversación
-    
-    Args:
-        query: Texto de búsqueda
-        user_id: Filtrar por usuario específico
-        conversation_id: Filtrar por conversación específica
-        limit: Número máximo de resultados
-        score_threshold: Score mínimo de relevancia (0.0 - 1.0)
-        max_retries: Intentos de reconexión
-    
-    Returns:
-        Lista de textos relevantes
-    """
     from qdrant_client.models import Filter, FieldCondition, MatchValue
-    
+
     for attempt in range(max_retries):
         try:
             query_vector = embedder.encode(query).tolist()
-            
-            # Construir filtros
+
             conditions = []
-            
             if user_id:
-                conditions.append(
-                    FieldCondition(key="user_id", match=MatchValue(value=user_id))
-                )
-            
+                conditions.append(FieldCondition(key="user_id", match=MatchValue(value=user_id)))
             if conversation_id:
-                conditions.append(
-                    FieldCondition(key="conversation_id", match=MatchValue(value=conversation_id))
-                )
-            
-            # Aplicar filtros solo si existen condiciones
+                conditions.append(FieldCondition(key="conversation_id", match=MatchValue(value=conversation_id)))
+
             query_filter = Filter(must=conditions) if conditions else None
-            
+
             results = client.search(
                 collection_name=COLLECTION_NAME,
                 query_vector=query_vector,
@@ -151,13 +145,11 @@ def search_context(query, user_id=None, conversation_id=None, limit=10, score_th
                 limit=limit,
                 score_threshold=score_threshold
             )
-            
-            # Retornar solo textos con score suficiente
+
             context_texts = [hit.payload["text"] for hit in results]
-            
             print(f"✅ Contexto encontrado: {len(context_texts)} mensajes (threshold={score_threshold})")
             return context_texts
-            
+
         except (ResponseHandlingException, Exception) as e:
             print(f"❌ Error buscando en Qdrant (intento {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
@@ -166,7 +158,8 @@ def search_context(query, user_id=None, conversation_id=None, limit=10, score_th
                 print("⚠️ No se pudo buscar en Qdrant. Retornando contexto vacío.")
                 return []
 
-# --- Función para verificar conexión ---
+
+# --- Verificar conexión ---
 def test_qdrant_connection():
     try:
         collections = client.get_collections()
@@ -176,7 +169,8 @@ def test_qdrant_connection():
         print(f"❌ Error conectando a Qdrant: {e}")
         return False
 
-# Inicialización lazy - solo cuando sea necesario
+
+# --- Inicialización lazy ---
 _collection_initialized = False
 
 def ensure_collection_initialized():
@@ -185,7 +179,6 @@ def ensure_collection_initialized():
         _collection_initialized = init_collection()
     return _collection_initialized
 
-# Para compatibilidad, mantener la inicialización automática pero con manejo de errores
 try:
     ensure_collection_initialized()
 except Exception as e:

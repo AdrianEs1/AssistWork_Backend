@@ -32,16 +32,12 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 def _sse_format(event_type: str, data: dict) -> str:
-    """
-    Formatea un evento SSE estándar.
-    Spec: https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events
+    """Formatea un evento SSE estándar con serialización segura."""
     
-    Formato:
-        event: <tipo>
-        data: <json>
-        \\n
-    """
-    payload = json.dumps(data, ensure_ascii=False)
+    # default=str convierte cualquier objeto raro (como MCPClientManager) 
+    # a su representación en string en lugar de lanzar error.
+    payload = json.dumps(data, ensure_ascii=False, default=str) 
+    
     return f"event: {event_type}\ndata: {payload}\n\n"
 
 
@@ -109,6 +105,12 @@ async def sse_stream(
 
         async def event_callback(event_type: str, event_data: dict):
             """Callback que recibe el orquestador y encola eventos SSE."""
+            # Eliminamos objetos pesados o no serializables si se colaron
+            if isinstance(event_data, dict):
+                event_data.pop("mcp_clients", None)
+                event_data.pop("client", None)
+                event_data.pop("mcp_client", None)
+                
             await queue.put((event_type, event_data))
 
         async def drain_queue():
