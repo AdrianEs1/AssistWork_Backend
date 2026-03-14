@@ -276,7 +276,7 @@ async def reset_password(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Token inválido o expirado"
+            detail="Este enlace es inválido o ha expirado"
         )
 
     user.password_hash = get_password_hash(payload.new_password)
@@ -327,7 +327,7 @@ async def confirm_account_deletion(
     if not user:
         raise HTTPException(
             status_code=400,
-            detail="Token inválido o expirado"
+            detail="Enlace inválido o expirado"
         )
 
     try:

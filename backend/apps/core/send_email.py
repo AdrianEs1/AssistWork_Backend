@@ -1,70 +1,36 @@
 import os
-import base64
-import pickle
-from email.mime.text import MIMEText
-from googleapiclient.discovery import build
-from google.auth.transport.requests import Request
+import requests
 from datetime import datetime
-from config import GMAIL_SENDER, GMAIL_TOKEN_SUPPORT
-
-
-def get_gmail_credentials():
-    """
-    Carga las credenciales de Gmail desde variable de entorno (Secret Manager en producción).
-    Maneja el refresh automático del token.
-    """
-    try:
-        # Decodificar el token desde base64
-        token_base64 = GMAIL_TOKEN_SUPPORT
-        
-        if not token_base64:
-            raise ValueError("GMAIL_TOKEN_SUPPORT no está configurado")
-        
-        # Convertir de base64 a bytes
-        token_bytes = base64.b64decode(token_base64)
-        
-        # Deserializar el pickle
-        creds = pickle.loads(token_bytes)
-        
-        # 🔁 Refrescar token si expiró
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            
-            # ⚠️ IMPORTANTE: En producción NO podemos guardar el token actualizado
-            # porque Secret Manager es read-only desde Cloud Run.
-            # El token se auto-refresca en cada llamada si es necesario.
-            print(f"✅ Token refrescado exitosamente - {datetime.now()}")
-        
-        return creds
-        
-    except Exception as e:
-        raise ValueError(f"Error al cargar credenciales de Gmail: {e}")
-
-
-
-#from config import GMAIL_SENDER
-
+from config import BREVO_API_KEY, EMAIL_SENDER
 
 def send_email(to_email: str, subject: str, html_content: str):
     """
-    Envia un email HTML usando Gmail API
+    Envía un email HTML usando la API v3 de Brevo.
+    Mucho más ligero para Cloud Run.
     """
-    creds = get_gmail_credentials()
-    service = build("gmail", "v1", credentials=creds)
+    url = "https://api.brevo.com/v3/smtp/email"
+    
+    payload = {
+        "sender": {"name": "AssistWork", "email": EMAIL_SENDER},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html_content
+    }
+    
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "api-key": BREVO_API_KEY
+    }
 
-    message = MIMEText(html_content, "html")
-    message["to"] = to_email
-    message["from"] = GMAIL_SENDER
-    message["subject"] = subject
-
-    raw_message = base64.urlsafe_b64encode(
-        message.as_bytes()
-    ).decode()
-
-    service.users().messages().send(
-        userId="me",
-        body={"raw": raw_message}
-    ).execute()
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status() # Lanza error si falla (4xx o 5xx)
+        return response.json()
+    except Exception as e:
+        print(f"❌ Error enviando correo a {to_email}: {e}")
+        # Aquí podrías registrar el error en Google Cloud Logging
+        return None
 
 
 
