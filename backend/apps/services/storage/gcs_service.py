@@ -13,7 +13,7 @@ import base64
 import json
 import uuid
 import re
-from config import GCS_BUCKET_NAME, GOOGLE_APPLICATION_CREDENTIALS
+from config import GCS_BUCKET_NAME, GOOGLE_APPLICATION_CREDENTIALS, logger
 
 # Configuración
 BUCKET_NAME = GCS_BUCKET_NAME
@@ -51,22 +51,22 @@ def get_storage_client():
             credentials_dict = json.loads(credentials_json)
             credentials = service_account.Credentials.from_service_account_info(credentials_dict)
             client = storage.Client(credentials=credentials, project=credentials_dict['project_id'])
-            print("✅ GCS inicializado con credenciales base64")
+            logger.info("✅ GCS inicializado con credenciales base64")
             return client
         except Exception as e:
-            print(f"❌ Error decodificando credenciales base64: {e}")
+            logger.info(f"❌ Error decodificando credenciales base64: {e}")
             raise
     
     elif CREDENTIALS_PATH and os.path.exists(CREDENTIALS_PATH):
         # Usar archivo JSON
         client = storage.Client.from_service_account_json(CREDENTIALS_PATH)
-        print(f"✅ GCS inicializado con archivo JSON: {CREDENTIALS_PATH}")
+        logger.info(f"✅ GCS inicializado con archivo JSON: {CREDENTIALS_PATH}")
         return client
     
     else:
         # Usar Application Default Credentials (si corres en GCP)
         client = storage.Client()
-        print("✅ GCS inicializado con Application Default Credentials")
+        logger.info("✅ GCS inicializado con Application Default Credentials")
         return client
 
 # Cliente y bucket
@@ -92,7 +92,7 @@ def upload_file(file_content: bytes, user_id: str, original_filename: str, file_
 
         # OPTIMIZACIÓN: Si el archivo ya existe físicamente en GCS, no lo resubas
         if blob.exists():
-            print(f"ℹ️ Archivo ya existe en GCS, omitiendo subida: {gcs_path}")
+            logger.info(f"ℹ️ Archivo ya existe en GCS, omitiendo subida: {gcs_path}")
             return {
                 "success": True,
                 "gcs_path": gcs_path,
@@ -103,7 +103,7 @@ def upload_file(file_content: bytes, user_id: str, original_filename: str, file_
         # Subir archivo
         blob.upload_from_string(file_content, content_type="application/pdf")
         
-        print(f"✅ Nuevo archivo subido a GCS: {gcs_path}")
+        logger.info(f"✅ Nuevo archivo subido a GCS: {gcs_path}")
         return {
             "success": True,
             "gcs_path": gcs_path,
@@ -112,7 +112,7 @@ def upload_file(file_content: bytes, user_id: str, original_filename: str, file_
         }
     
     except Exception as e:
-        print(f"❌ Error subiendo a GCS: {e}")
+        logger.info(f"❌ Error subiendo a GCS: {e}")
         return {"success": False, "error": str(e)}
     
 
@@ -132,15 +132,15 @@ def download_to_memory(gcs_path: str) -> BytesIO:
         blob.download_to_file(file_bytes)
         file_bytes.seek(0)  # Resetear puntero al inicio
         
-        print(f"✅ Archivo descargado de GCS: {gcs_path}")
+        logger.info(f"✅ Archivo descargado de GCS: {gcs_path}")
         return file_bytes
     
     except NotFound:
-        print(f"❌ Archivo no encontrado en GCS: {gcs_path}")
+        logger.info(f"❌ Archivo no encontrado en GCS: {gcs_path}")
         raise FileNotFoundError(f"Archivo no existe: {gcs_path}")
     
     except Exception as e:
-        print(f"❌ Error descargando de GCS: {e}")
+        logger.info(f"❌ Error descargando de GCS: {e}")
         raise
 
 
@@ -163,11 +163,11 @@ def generate_signed_url(gcs_path: str, expiration_minutes: int = 60) -> str:
             method="GET"
         )
         
-        print(f"✅ URL firmada generada: {gcs_path} (válida {expiration_minutes}min)")
+        logger.info(f"✅ URL firmada generada: {gcs_path} (válida {expiration_minutes}min)")
         return url
     
     except Exception as e:
-        print(f"❌ Error generando URL firmada: {e}")
+        logger.info(f"❌ Error generando URL firmada: {e}")
         raise
 
 
@@ -185,15 +185,15 @@ def delete_file(gcs_path: str) -> bool:
         blob = bucket.blob(gcs_path)
         blob.delete()
         
-        print(f"✅ Archivo eliminado de GCS: {gcs_path}")
+        logger.info(f"✅ Archivo eliminado de GCS: {gcs_path}")
         return True
     
     except NotFound:
-        print(f"⚠️ Archivo ya no existe: {gcs_path}")
+        logger.info(f"⚠️ Archivo ya no existe: {gcs_path}")
         return True
     
     except Exception as e:
-        print(f"❌ Error eliminando de GCS: {e}")
+        logger.info(f"❌ Error eliminando de GCS: {e}")
         return False
 
 

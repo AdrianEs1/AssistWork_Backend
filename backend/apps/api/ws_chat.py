@@ -13,6 +13,7 @@ from apps.database import SessionLocal
 #from apps.core.dependencies import get_db
 from apps.api.dependencies import get_user_from_token
 from apps.models.user import User
+from apps.models.message import Message
 from apps.services.orchestrator.orchestrator_service import orchestrator
 #from apps.services.conversation_service import conversation_service
 from apps.services.conversation.conversation_service import conversation_service
@@ -249,6 +250,14 @@ async def websocket_endpoint(
                     # Log para debugging
                     print(f"🔍 Contexto recuperado: {len(context_list)} mensajes")
                     
+                    # Recuperar el historial previo excluyendo el último mensaje que acabamos de meter
+                    past_messages = db.query(Message).filter(
+                        Message.conversation_id == conversation.id,
+                        Message.content != user_message
+                    ).order_by(Message.created_at.asc()).limit(20).all()
+                    
+                    conversation_history = [{"role": m.role, "content": m.content} for m in past_messages]
+                    
                     # 4.5 Definir callback para eventos del orquestador
                     async def event_callback(event_type: str, event_data: dict):
                         await manager.send_event(str(current_user.id), session_id, event_type, event_data)  # ← AGREGAR session_id
@@ -256,10 +265,11 @@ async def websocket_endpoint(
                     
                     # 4.6 Ejecutar orquestador CON callback
                     result = await orchestrator(
-                        user_message,
+                        user_input=user_message,
                         user_id=str(current_user.id),
                         context=context_text,
-                        event_callback=event_callback
+                        event_callback=event_callback,
+                        conversation_history=conversation_history
                     )
                     
                     print(f"📊 Resultado orquestador (WS): {result}")

@@ -16,6 +16,7 @@ from apps.services.orchestrator.orchestrator_service import orchestrator
 from apps.services.conversation.conversation_service import conversation_service  # ✅ Nuevo
 from apps.core.dependencies import get_current_user, get_db  # ✅ Nuevo
 from apps.models.user import User  # ✅ Nuevo
+from apps.models.message import Message
 
 router = APIRouter()
 
@@ -62,10 +63,22 @@ async def call_model(
     
     
     # 4. TU LÓGICA ACTUAL (sin cambios)
+    # Recuperar el historial previo excluyendo el último mensaje que acabamos de meter
+    past_messages = db.query(Message).filter(
+        Message.conversation_id == conversation.id,
+        Message.content != request.message
+    ).order_by(Message.created_at.asc()).limit(20).all()
+    conversation_history = [{"role": m.role, "content": m.content} for m in past_messages]
+
     context_list = search_context(request.message)
     context_text = "\n".join(context_list)
     
-    result = await orchestrator(request.message, user_id=str(current_user.id),context=context_text)
+    result = await orchestrator(
+        user_input=request.message, 
+        user_id=str(current_user.id),
+        context=context_text,
+        conversation_history=conversation_history
+    )
     print(f"Respuesta del orquestador: {result}")
     
     # 5. Guardar respuesta del agente en BD

@@ -15,6 +15,7 @@ from datetime import datetime
 from apps.database import SessionLocal
 from apps.api.dependencies import get_user_from_token
 from apps.models.user import User
+from apps.models.message import Message
 from apps.services.orchestrator.orchestrator_service import orchestrator
 from apps.services.conversation.conversation_service import conversation_service
 from apps.services.memory.qdrant_service import store_message, search_context
@@ -193,14 +194,23 @@ async def sse_stream(
             context_text = "\n".join(context_list) if context_list else ""
             print(f"🔍 Contexto recuperado: {len(context_list)} mensajes")
 
+            # Recuperar el historial previo excluyendo el último mensaje que acabamos de meter
+            past_messages = db.query(Message).filter(
+                Message.conversation_id == conversation.id,
+                Message.content != message # Basicamente evitamos duplicar la intencion actual
+            ).order_by(Message.created_at.asc()).limit(20).all()
+            
+            conversation_history = [{"role": m.role, "content": m.content} for m in past_messages]
+
             # 4.5 Lanzar orquestador en background y consumir eventos
             #     conforme van llegando a la cola.
             orchestrator_task = asyncio.create_task(
                 orchestrator(
-                    message,
+                    user_input=message,
                     user_id=str(current_user.id),
                     context=context_text,
                     event_callback=event_callback,
+                    conversation_history=conversation_history
                 )
             )
 
