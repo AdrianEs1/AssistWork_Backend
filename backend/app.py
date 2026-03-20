@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import lifespan, logger
 from apps.api import auth, call_model, conversations, ws_chat, agentcontext, oauth, payments, mercadopago_webhook, sse_chat
+from config import FRONTEND_URL
 
 app = FastAPI(
     title="Agente IA API",
@@ -11,11 +12,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
 origins = [
 
-    "http://localhost:5173",
-    "https://assistwork.vercel.app",
-    "https://assistwork-backend-273334954418.us-central1.run.app" #
+    FRONTEND_URL,
 
 ]
 
