@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import lifespan, logger
 from apps.api import auth, call_model, conversations, ws_chat, agentcontext, oauth, payments, mercadopago_webhook, sse_chat
 from config import FRONTEND_URL
+import os
+
+
 
 app = FastAPI(
     title="Agente IA API",

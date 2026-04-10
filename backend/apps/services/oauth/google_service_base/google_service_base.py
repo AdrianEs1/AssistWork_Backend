@@ -34,6 +34,9 @@ class GoogleServiceBase(ABC):
     # -------------------------------------------------------------------------
     # MÉTODOS PRINCIPALES
     # -------------------------------------------------------------------------
+    def _get_integration_name(self):
+        return f"google:{self.service_name}"
+
     def get_service(self, user_id: str):
         """
         Obtiene un cliente autenticado para el servicio de Google.
@@ -169,9 +172,12 @@ class GoogleServiceBase(ABC):
         Raises:
             ValueError: Si no existe conexión activa
         """
+        integration = self._get_integration_name()
         oauth_conn = (
             db.query(OAuthConnection)
-            .filter_by(user_id=user_id, service=self.service_name, is_active=True)
+            .filter_by(user_id=user_id,
+            integration=integration,
+            is_active=True)
             .with_for_update()  # 🔒 Lock pesimista para evitar race conditions
             .first()
         )
@@ -180,7 +186,7 @@ class GoogleServiceBase(ABC):
             # Intentar por service_user_id (sub de Google)
             oauth_conn = (
                 db.query(OAuthConnection)
-                .filter_by(service_user_id=user_id, service=self.service_name, is_active=True)
+                .filter_by(service_user_id=user_id, integration=integration, is_active=True)
                 .with_for_update()
                 .first()
             )

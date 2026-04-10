@@ -15,7 +15,7 @@ import fitz  # PyMuPDF (para PDF)
 import docx
 import os
 import re
-from tools.google_service_base import GoogleServiceBase
+from backend.apps.services.oauth.google_service_base.google_service_base import GoogleServiceBase
 
 from fastapi import Depends
 from apps.core.dependencies import get_db

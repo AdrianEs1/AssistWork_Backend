@@ -7,7 +7,7 @@ from typing import Dict, Any, List, Optional
 from mcp.server.fastmcp import FastMCP
 
 # Importa tu base (ajusta la ruta según tu proyecto)
-from tools.google_service_base import GoogleServiceBase
+from apps.services.oauth.google_service_base.google_service_base import GoogleServiceBase
 
 # 1. Mantenemos tu clase de servicio intacta
 

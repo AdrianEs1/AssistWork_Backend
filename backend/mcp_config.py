@@ -17,5 +17,12 @@ MCP_CONFIG = {
             "args": ["-m", "mcp_Server.LOCAL_FILES_ServerMCP"]
         },
         "production": "python" # A verificar futura ubicación en producción
+    },
+    "teams":{
+        "development": {
+            "command": "python",
+            "args": ["-m", "mcp_Server.TEAMS_serverMCP"]
+        },
+        "production": "python" # A verificar futura ubicación en producción
     }
 }

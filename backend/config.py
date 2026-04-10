@@ -35,7 +35,7 @@ GROQ_URL = os.getenv("GROQ_URL")
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
+REDIRECT_URI = os.getenv("REDIRECT_URI")
 GOOGLE_TOKEN_JSON= os.getenv("GOOGLE_TOKEN_JSON")
 
 
@@ -72,23 +72,5 @@ MERCADOPAGO_PUBLIC_KEYPROD= os.getenv("MERCADOPAGO_PUBLIC_KEYPROD")
 
 
 
-
-# Determinar el entorno (puedes cambiarlo a "production" cuando lances)
-"""ENV = os.getenv("APP_ENV", "development")
-
-MCP_CONFIG = {
-    "gmail": {
-        "development": {
-            "command": "python",
-            "args": ["-m", "mcp_Server.GMAIL_ServerMCP"]
-        },
-        "production": "https://mcp-gmail.assistwork.ai/sse" # URL futura para producción
-    },
-    "localfiles": {
-        "development": {
-            "command": "python",
-            "args": ["-m", "mcp_Server.LOCAL_FILES_ServerMCP"]
-        },
-        "production": "python" # A verificar futura ubicación en producción
-    }
-}"""
+MICROSOFT_CLIENT_SECRET= os.getenv("MICROSOFT_CLIENT_SECRET")
+MICROSOFT_ID_CLIENT= os.getenv("MICROSOFT_ID_CLIENT")

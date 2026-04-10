@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from apps.models.oauth_connection import OAuthConnection
 from apps.database import SessionLocal
 from datetime import datetime, timedelta
-from tools.google_service_base import GoogleServiceBase
+from backend.apps.services.oauth.google_service_base.google_service_base import GoogleServiceBase
 
 
 #SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]

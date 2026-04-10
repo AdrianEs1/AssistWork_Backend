@@ -2,7 +2,7 @@ import google.generativeai as genai
 import google.ai.generativelanguage as glm
 import anyio
 from config import GOOGLE_API_KEY
-from apps.services.prompt.agent_identity import AGENT_IDENTITY, OAUTH_GUIDE
+#from apps.services.prompt.agent_identity import AGENT_IDENTITY, OAUTH_GUIDE
 
 # Configura la API key
 genai.configure(api_key=GOOGLE_API_KEY)

@@ -4,23 +4,24 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from apps.core.dependencies import get_db, get_current_user
-from apps.services.oauth.oauth_service_email import oauth_service
+from apps.services.oauth.oauth_service import oauth_service
 from apps.schemas.oauth import (
     OAuthConnectResponse,
     OAuthConnectionResponse
 )
 from apps.models.user import User
 from apps.models.oauth_connection import OAuthConnection
-from tools.App_Drive.dic_drive_tool import DriveService
+#from tools.App_Drive.dic_drive_tool import DriveService
+from apps.services.oauth.utils import get_integration_config
 from config import FRONTEND_URL
 
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
 
 
-@router.get("/{service}/connect", response_model=OAuthConnectResponse)
+@router.get("/{integration}/connect", response_model=OAuthConnectResponse)
 async def connect_service(
-    service: str,
+    integration: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)  # Ya lo tienes
 ):
@@ -33,16 +34,18 @@ async def connect_service(
     """
 
     # Verificar que el servicio sea soportado
-    if service not in oauth_service.SUPPORTED_SERVICES:
+    try:
+        config = get_integration_config(integration)
+    except Exception:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Servicio '{service}' no soportado"
+            status_code=400,
+            detail=f"Integración '{integration}' no soportada"
         )
 
     # Primero intentar reconexión rápida
     result = oauth_service.reconnect_service(
         str(current_user.id),
-        service,
+        integration,
         db
     )
     
@@ -55,7 +58,7 @@ async def connect_service(
     # Generar URL de autorización con scopes acumulados
     authorization_url, state = oauth_service.generate_authorization_url(
         str(current_user.id),
-        service,
+        integration,
         db  # 🔥 Ahora necesita la sesión de BD
     )
 
@@ -90,11 +93,10 @@ async def oauth_callback(
             code=code,
             state=state,
             user_id=user_id,
-            service="",  # <-- ya no usamos este argumento, se ignora dentro del método
             db=db
         )
 
-        service = oauth_conn.service
+        integration = oauth_conn.integration
         email = oauth_conn.meta_data.get("email", "")
 
         # HTML de cierre
@@ -103,13 +105,13 @@ async def oauth_callback(
         <html>
         <head><title>Autenticación exitosa</title></head>
         <body>
-            <h2>✅ Autenticación exitosa en {service.capitalize()}</h2>
+            <h2>✅ Autenticación exitosa en {integration.capitalize()}</h2>
             <p>Cerrando ventana...</p>
             <script>
                 if (window.opener) {{
                     window.opener.postMessage({{
                         status: 'success',
-                        app: '{service}',
+                        app: '{integration}',
                         email: '{email}'
                     }}, '{FRONTEND_URL}');
                     setTimeout(() => window.close(), 500);
@@ -140,25 +142,24 @@ async def get_connections(
     return connections
 
 
-@router.get("/{service}/status")
+@router.get("/{integration}/status")
 async def service_status(
-    service: str,
+    integration: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Verifica si un servicio está conectado
     """
-    if service not in oauth_service.SUPPORTED_SERVICES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Servicio '{service}' no soportado"
-        )
+    oauth_conn = oauth_service.get_user_connection(
+        str(current_user.id),
+        integration,
+        db
+    )
 
-    oauth_conn = oauth_service.get_user_connection(str(current_user.id), service, db)
 
     if not oauth_conn:
-        return {"connected": False, "message": f"{service.capitalize()} no conectado"}
+        return {"connected": False, "message": f"{integration.capitalize()} no conectado"}
 
     return {
         "connected": True,
@@ -168,9 +169,9 @@ async def service_status(
     }
 
 
-@router.delete("/{service}/disconnect")
+@router.delete("/{integration}/disconnect")
 async def disconnect_service(
-    service: str,
+    integration: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -180,21 +181,19 @@ async def disconnect_service(
     Si es el último servicio activo, revoca el token en Google y elimina
     todos los registros para permitir un inicio limpio.
     """
-    if service not in oauth_service.SUPPORTED_SERVICES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Servicio '{service}' no soportado"
-        )
-
-    result = oauth_service.disconnect_service(str(current_user.id), service, db)
+    result = oauth_service.disconnect_service(
+        str(current_user.id),
+        integration,
+        db
+    )
 
     if not result["success"]:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"{service.capitalize()} no estaba conectado"
+            detail=f"{integration.capitalize()} no estaba conectado"
         )
 
-    message = f"{service.capitalize()} desconectado exitosamente"
+    message = f"{integration.capitalize()} desconectado exitosamente"
     
     if result["revoked"] and result["cleaned"]:
         message += ". Token revocado en Google - puedes reconectar servicios en cualquier orden."

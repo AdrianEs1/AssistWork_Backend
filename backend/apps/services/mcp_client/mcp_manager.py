@@ -15,7 +15,7 @@ class MCPClientManager:
         self.user_id = user_id
         self.sessions: Dict[str, ClientSession] = {}
         self.exit_stacks: Dict[str, AsyncExitStack] = {}
-        self.tool_to_server: Dict[str, str] = {}
+        self.tool_to_server: Dict[str, Dict[str, str]] = {}
 
     # ------------------------------------------------------------------
     # Conexión
@@ -93,58 +93,104 @@ class MCPClientManager:
     # Herramientas
     # ------------------------------------------------------------------
 
-    async def get_all_tools(self) -> List[Any]:
-        """Obtiene las herramientas de todos los servidores conectados."""
-        all_tools = []
+    async def get_all_tools(self) -> List[Dict[str, Any]]:
+        """
+        Obtiene todas las herramientas de todos los servidores conectados.
+        Retorna una lista de diccionarios con {'server': str, 'tool': tool_object}.
+        """
+        all_tools_with_context = []
+
         for server_name, session in self.sessions.items():
-            result = await session.list_tools()
-            for tool in result.tools:
-                self.tool_to_server[tool.name] = server_name
-                all_tools.append(tool)
-        return all_tools
+            try:
+                print(f"🔍 Cargando tools de: {server_name}")
+                result = await session.list_tools()
 
-    def _clean_schema(self, schema: Any, is_property: bool = False) -> Any:
-        """Limpia atributos no soportados por Gemini recursivamente."""
+                for tool in result.tools:
+                    # Guardamos la herramienta con su contexto de servidor
+                    all_tools_with_context.append({
+                        "server": server_name,
+                        "tool": tool
+                    })
+
+                print(f"✅ {server_name}: {len(result.tools)} tools")
+
+            except Exception as e:
+                import traceback
+                print(f"❌ Error obteniendo tools de {server_name}:")
+                traceback.print_exc()
+
+        return all_tools_with_context
+
+    def _clean_schema(self, schema: Any) -> Any:
         if not isinstance(schema, dict):
-            return schema
+            return {
+                "type": "object",
+                "properties": {}
+            }
 
-        REMOVE_KEYS = {"title", "default", "$schema", "anyOf", "allOf", "oneOf"}
+        props = schema.get("properties", {})
 
-        cleaned = {}
-        for k, v in schema.items():
-            if k in REMOVE_KEYS:
-                continue
-            if k == "properties" and isinstance(v, dict):
-                cleaned["properties"] = {
-                    prop_name: self._clean_schema(prop_schema, is_property=True)
-                    for prop_name, prop_schema in v.items()
-                }
-            elif isinstance(v, dict):
-                cleaned[k] = self._clean_schema(v, is_property=True)
-            elif isinstance(v, list):
-                cleaned[k] = [
-                    self._clean_schema(item, is_property=True) if isinstance(item, dict) else item
-                    for item in v
-                ]
-            else:
-                cleaned[k] = v
+        clean_props = {}
 
-        if is_property and "type" not in cleaned and "properties" not in cleaned:
-            cleaned["type"] = "string"
+        for key, value in props.items():
+            if not isinstance(value, dict):
+                value = {}
 
-        return cleaned
+            prop_type = value.get("type")
 
-    def to_gemini_tools(self, mcp_tools: List[Any]) -> List[Tool]:
-        """Convierte herramientas MCP a FunctionDeclarations de Gemini."""
+            # 🔥 Forzar tipo SIEMPRE
+            if prop_type not in ["string", "number", "integer", "boolean"]:
+                prop_type = "string"
+
+            clean_props[key] = {
+                "type": prop_type,
+                "description": value.get("description", "")
+            }
+
+        return {
+            "type": "object",
+            "properties": clean_props,
+            "required": list(props.keys())  # opcional pero ayuda al LLM
+        }
+
+    def to_gemini_tools(self, mcp_tools_with_context: List[Dict[str, Any]]) -> List[Tool]:
+        """
+        Convierte herramientas MCP a formato Gemini Tool, prefijando nombres para evitar colisiones.
+        Ejemplo: 'gmail_send_email', 'teams_list_chats'.
+        """
         declarations = []
-        for tool in mcp_tools:
-            schema = self._clean_schema(tool.inputSchema)
-            declarations.append(FunctionDeclaration(
-                name=tool.name,
-                description=tool.description,
-                parameters=schema
-            ))
-        return [Tool(function_declarations=declarations)] if declarations else []
+        self.tool_to_server.clear() # Limpiar mapeo previo
+
+        for item in mcp_tools_with_context:
+            server = item["server"]
+            tool = item["tool"]
+            
+            # 🔥 PREFIJO PARA EVITAR COLISIONES (Gemini ValueError)
+            prefixed_name = f"{server}_{tool.name}"
+            
+            try:
+                schema = self._clean_schema(tool.inputSchema)
+
+                declarations.append(FunctionDeclaration(
+                    name=prefixed_name,
+                    description=tool.description or "",
+                    parameters=schema
+                ))
+                
+                # Registrar mapeo para call_tool
+                self.tool_to_server[prefixed_name] = {
+                    "server": server,
+                    "original_name": tool.name
+                }
+
+            except Exception as e:
+                print(f"❌ Tool inválida descartada: {prefixed_name} -> {e}")
+
+        if not declarations:
+            return []
+
+        # Retornamos envuelto en Tool
+        return [Tool(function_declarations=declarations)]
 
     # ------------------------------------------------------------------
     # Ejecución de herramientas con reconexión automática
@@ -152,15 +198,17 @@ class MCPClientManager:
 
     async def call_tool(self, tool_name: str, arguments: dict) -> dict:
         """
-        Llama a una herramienta en su servidor MCP correspondiente.
-        Si la sesión está caída, intenta reconectar una vez automáticamente.
+        Llama a una herramienta en su servidor MCP correspondiente usando el nombre prefijado.
         """
-        server_name = self.tool_to_server.get(tool_name)
-        if not server_name:
+        mapping = self.tool_to_server.get(tool_name)
+        if not mapping:
             return {
                 "success": False,
-                "error": f"Herramienta '{tool_name}' no encontrada en los servidores activos."
+                "error": f"Herramienta '{tool_name}' no encontrada. Verifica si está conectada."
             }
+
+        server_name = mapping["server"]
+        original_name = mapping["original_name"]
 
         # Reconectar si la sesión no existe
         if server_name not in self.sessions:
@@ -168,14 +216,14 @@ class MCPClientManager:
             await self.connect_server(server_name)
 
         try:
-            return await self._execute_tool(server_name, tool_name, arguments)
+            return await self._execute_tool(server_name, original_name, arguments)
         except Exception as e:
             # Intento de reconexión automática ante fallo
             print(f"⚠️  [{self.user_id[:8]}] Fallo en '{server_name}', reconectando: {e}")
             await self.close_server(server_name)
             try:
                 await self.connect_server(server_name)
-                return await self._execute_tool(server_name, tool_name, arguments)
+                return await self._execute_tool(server_name, original_name, arguments)
             except Exception as e2:
                 return {"success": False, "error": str(e2)}
 

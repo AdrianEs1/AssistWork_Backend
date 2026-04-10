@@ -1,0 +1,34 @@
+SUPPORTED_INTEGRATIONS = {
+    # 🔵 GOOGLE
+    "google:gmail": {
+        "provider": "google",
+        "service": "gmail",
+        "scopes": [
+            "openid",
+            "email",
+            "profile",
+            "https://www.googleapis.com/auth/gmail.readonly",
+            "https://www.googleapis.com/auth/gmail.send"
+        ]
+    },
+    
+    # 🔵 MICROSOFT
+    "microsoft:teams": {
+    "provider": "microsoft",
+    "service": "teams",
+    "scopes": [
+        "openid",
+        "profile",
+        "email",
+        "offline_access",
+        "https://graph.microsoft.com/User.Read",
+        "https://graph.microsoft.com/Chat.Read",
+        "https://graph.microsoft.com/Chat.ReadWrite",
+        "https://graph.microsoft.com/ChatMessage.Send",
+        "https://graph.microsoft.com/ChannelMessage.Send",
+        "https://graph.microsoft.com/Team.ReadBasic.All",
+        "https://graph.microsoft.com/Channel.ReadBasic.All",
+    ]
+}
+}
+
