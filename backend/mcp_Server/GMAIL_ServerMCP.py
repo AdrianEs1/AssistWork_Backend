@@ -105,7 +105,7 @@ async def list_emails(user_id: str, label: str = "INBOX", max_results: int = 5, 
         service = gmail_instance.get_service(user_id)
         params = {"userId": "me", "maxResults": max_results}
         if query: params["q"] = query
-        else: params["labelIds"] = [label]
+        else: params["labelIds"] = [label.upper()]
         
         results = service.users().messages().list(**params).execute()
         messages = results.get("messages", [])
