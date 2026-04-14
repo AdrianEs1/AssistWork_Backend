@@ -4,9 +4,6 @@ SUPPORTED_INTEGRATIONS = {
         "provider": "google",
         "service": "gmail",
         "scopes": [
-            "openid",
-            "email",
-            "profile",
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.send"
         ]
