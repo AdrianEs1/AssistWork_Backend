@@ -79,110 +79,117 @@ async def sse_stream(
         conversation_id UUID conversación (opcional)
         session_id      UUID por pestaña — permite múltiples tabs
     """
+    async with timer("...Tiempo empleado en Autentication: "):
+        # ── 1. Autenticación ──────────────────────────────────────────────────
+        db = SessionLocal()
+        try:
+            current_user: User = await get_user_from_token(token, db)
+        except Exception as e:
+            db.close()
 
-    # ── 1. Autenticación ──────────────────────────────────────────────────
-    db = SessionLocal()
-    try:
-        current_user: User = await get_user_from_token(token, db)
-    except Exception as e:
-        db.close()
+            async def auth_error():
+                yield _sse_format("error", {
+                    "message": f"Autenticación fallida: {str(e)}",
+                    "error_type": "AuthError",
+                    "session_id": session_id,
+                })
 
-        async def auth_error():
-            yield _sse_format("error", {
-                "message": f"Autenticación fallida: {str(e)}",
-                "error_type": "AuthError",
-                "session_id": session_id,
-            })
-
-        return StreamingResponse(auth_error(), media_type="text/event-stream")
-    finally:
-        db.close()
+            return StreamingResponse(auth_error(), media_type="text/event-stream")
+        finally:
+            db.close()
 
     # ── 2. Generador principal ────────────────────────────────────────────
     async def event_generator():
 
         # Cola interna: el event_callback encola eventos,
         # el generador los saca y los formatea como SSE.
-        queue: asyncio.Queue = asyncio.Queue()
+        async with timer("...Tiempo empleado encolar eventos y formato a SSE: "):
+            queue: asyncio.Queue = asyncio.Queue()
 
-        async def event_callback(event_type: str, event_data: dict):
-            """Callback que recibe el orquestador y encola eventos SSE."""
-            # Eliminamos objetos pesados o no serializables si se colaron
-            if isinstance(event_data, dict):
-                event_data.pop("mcp_clients", None)
-                event_data.pop("client", None)
-                event_data.pop("mcp_client", None)
-                
-            await queue.put((event_type, event_data))
+            async def event_callback(event_type: str, event_data: dict):
+                """Callback que recibe el orquestador y encola eventos SSE."""
+                # Eliminamos objetos pesados o no serializables si se colaron
+                if isinstance(event_data, dict):
+                    event_data.pop("mcp_clients", None)
+                    event_data.pop("client", None)
+                    event_data.pop("mcp_client", None)
+                    
+                await queue.put((event_type, event_data))
 
-        async def drain_queue():
-            """Vacía la cola y emite todos los eventos pendientes."""
-            while not queue.empty():
-                evt_type, evt_data = await queue.get()
-                yield _sse_format(evt_type, {
+            async def drain_queue():
+                """Vacía la cola y emite todos los eventos pendientes."""
+                while not queue.empty():
+                    evt_type, evt_data = await queue.get()
+                    yield _sse_format(evt_type, {
+                        "session_id": session_id,
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        **evt_data,
+                    })
+
+            # ── Keep-alive inicial (Cloud Run necesita datos rápido) ──────────
+            yield _sse_comment("connected")
+
+        async with timer("...Tiempo empleado verficando limites de suscripcion: "):
+            # ── 3. Verificar límites de suscripción ───────────────────────────
+            db = SessionLocal()
+            try:
+                limit_check = check_conversation_limit(current_user.id, db)
+
+                if limit_check.get("conversations_remaining") and \
+                limit_check["conversations_remaining"] <= 3:
+                    yield _sse_format("warning", {
+                        "session_id": session_id,
+                        "message": (
+                            f"⚠️ Te quedan {limit_check['conversations_remaining']} "
+                            f"conversaciones. Considera hacer upgrade."
+                        ),
+                        "upgrade_url": "/pricing",
+                    })
+
+            except SubscriptionLimitError as e:
+                yield _sse_format("completed", {
                     "session_id": session_id,
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    **evt_data,
+                    "message": e.message,
+                    "upgrade_required": e.upgrade_required,
+                    "upgrade_url": "/pricing" if e.upgrade_required else None,
                 })
-
-        # ── Keep-alive inicial (Cloud Run necesita datos rápido) ──────────
-        yield _sse_comment("connected")
-
-        # ── 3. Verificar límites de suscripción ───────────────────────────
-        db = SessionLocal()
-        try:
-            limit_check = check_conversation_limit(current_user.id, db)
-
-            if limit_check.get("conversations_remaining") and \
-               limit_check["conversations_remaining"] <= 3:
-                yield _sse_format("warning", {
-                    "session_id": session_id,
-                    "message": (
-                        f"⚠️ Te quedan {limit_check['conversations_remaining']} "
-                        f"conversaciones. Considera hacer upgrade."
-                    ),
-                    "upgrade_url": "/pricing",
-                })
-
-        except SubscriptionLimitError as e:
-            yield _sse_format("completed", {
-                "session_id": session_id,
-                "message": e.message,
-                "upgrade_required": e.upgrade_required,
-                "upgrade_url": "/pricing" if e.upgrade_required else None,
-            })
-            db.close()
-            return
-        finally:
-            db.close()
+                db.close()
+                return
+            finally:
+                db.close()
 
         # ── 4. Procesar mensaje ───────────────────────────────────────────
         db = SessionLocal()
         try:
-            # 4.1 Conversación
-            conversation = conversation_service.get_or_create_active_conversation(
-                user_id=current_user.id,
-                conversation_id=conversation_id,
-                db=db,
-            )
-
-            # 4.2 Guardar mensaje usuario
-            conversation_service.save_user_message(
-                conversation_id=conversation.id,
-                content=message,
-                db=db,
-            )
-
-            # 4.3 Actualizar título si es nueva
-            if conversation.title == "Nueva conversacion":
-                title = await conversation_service.update_conversation_title(
-                    conversation_id=conversation.id,
-                    first_message=message,
+            async with timer("...Tiempo empleado obteniendo o creando conversation: "):
+                # 4.1 Conversación
+                conversation = conversation_service.get_or_create_active_conversation(
                     user_id=current_user.id,
+                    conversation_id=conversation_id,
                     db=db,
                 )
-                if title:
-                    conversation.title = title
+            
+
+            async with timer("...Tiempo empleado guardando mensaje de usuario: "):
+
+                # 4.2 Guardar mensaje usuario
+                conversation_service.save_user_message(
+                    conversation_id=conversation.id,
+                    content=message,
+                    db=db,
+                )
+            
+            async with timer("...Tiempo empleado actualizando titulo: "):
+                # 4.3 Actualizar título si es nueva
+                if conversation.title == "Nueva conversacion":
+                    title = await conversation_service.update_conversation_title(
+                        conversation_id=conversation.id,
+                        first_message=message,
+                        user_id=current_user.id,
+                        db=db,
+                    )
+                    if title:
+                        conversation.title = title
 
             async with timer("...Tiempo empleado buscando contexto: "):
             # 4.4 Contexto semántico

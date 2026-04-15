@@ -42,19 +42,22 @@ async def orchestrator(
     gemini_tools = []
     disconnected_apps = []
 
+    
+
     if intent == "agentTask":
-        try:
-            manager = await get_manager(user_id)
-            mcp_tools = await manager.get_all_tools()
-            gemini_tools = manager.to_gemini_tools(mcp_tools)
+        async with timer("...Tiempo empleado cargando herramientas en agenTask : "):
+            try:
+                manager = await get_manager(user_id)
+                mcp_tools = await manager.get_all_tools()
+                gemini_tools = manager.to_gemini_tools(mcp_tools)
 
-            total_decls = sum(len(t.function_declarations) for t in gemini_tools)
-            print(f"🛠️ Tools cargadas: {len(mcp_tools)} MCP | {total_decls} Gemini decls")
+                total_decls = sum(len(t.function_declarations) for t in gemini_tools)
+                print(f"🛠️ Tools cargadas: {len(mcp_tools)} MCP | {total_decls} Gemini decls")
 
-        except Exception:
-            import traceback
-            print("⚠️ Error cargando herramientas MCP:")
-            traceback.print_exc()
+            except Exception:
+                import traceback
+                print("⚠️ Error cargando herramientas MCP:")
+                traceback.print_exc()
     else:
         print(f"ℹ️ Saltando carga de herramientas MCP para intención: {intent}")
 
@@ -71,17 +74,19 @@ async def orchestrator(
     if not any("teams" in t for t in tool_names):
         disconnected_apps.append("Microsoft Teams")
 
+    async with timer("...Tiempo empleado construyendo system promp dinamico : "):
+
     # ── 3. Construir system prompt dinámico ─────────────────────────────────
-    is_first_message = not conversation_history  # Sin historial = primer turno
+        is_first_message = not conversation_history  # Sin historial = primer turno
 
-    system_instruction = build_system_prompt(
-        intent=intent,
-        disconnected_apps=disconnected_apps,
-        is_first_message=is_first_message,
-        has_tool_error=False,
-    )
+        system_instruction = build_system_prompt(
+            intent=intent,
+            disconnected_apps=disconnected_apps,
+            is_first_message=is_first_message,
+            has_tool_error=False,
+        )
 
-    print(f"\nEsto es la System_instruction que se envia al LLM según la intencion {intent}:\n {system_instruction}\n")
+        print(f"\nEsto es la System_instruction que se envia al LLM según la intencion {intent}:\n {system_instruction}\n")
 
     # ── 4. Construir historial para ChatSession ──────────────────────────────
     history_for_chat = []
@@ -101,16 +106,17 @@ async def orchestrator(
             role = "user" if msg.get("role") in ["user", "tool_response"] else "model"
             history_for_chat.append({"role": role, "parts": [msg.get("content", "")]})
 
-    # ── 5. Crear modelo y ChatSession ───────────────────────────────────────
-    model = genai.GenerativeModel(
-        model_name="gemini-3.1-flash-lite-preview",
-        tools=gemini_tools or [],
-        system_instruction=system_instruction,
-        generation_config=genai.GenerationConfig(
-            temperature=0.4,
-            max_output_tokens=8000,
-        ),
-    )
+    async with timer("...Tiempo empleado construyendo modelo : "):
+        # ── 5. Crear modelo y ChatSession ───────────────────────────────────────
+        model = genai.GenerativeModel(
+            model_name="gemini-3.1-flash-lite-preview",
+            tools=gemini_tools or [],
+            system_instruction=system_instruction,
+            generation_config=genai.GenerationConfig(
+                temperature=0.4,
+                max_output_tokens=8000,
+            ),
+        )
 
     chat = model.start_chat(history=history_for_chat)
 
@@ -124,134 +130,136 @@ async def orchestrator(
     # Si NO es agentTask, no forzamos tools y limitamos a 1 paso
     if intent != "agentTask":
         max_steps = 1
+    async with timer("...Tiempo empleado en loop de agentTask : "):
+        while step < max_steps:
+            step += 1
 
-    while step < max_steps:
-        step += 1
+            if event_callback and step > 1:
+                await event_callback("processing", {"message": f"Pensando... (Paso {step})"})
 
-        if event_callback and step > 1:
-            await event_callback("processing", {"message": f"Pensando... (Paso {step})"})
+            print(f"🧠 Llamando al LLM (Turno {step})...")
 
-        print(f"🧠 Llamando al LLM (Turno {step})...")
-
-        # Primer turno: forzar uso de herramienta si hay tools disponibles
-        tool_config = None
-        if gemini_tools and is_first_turn:
-            tool_config = glm.ToolConfig(
-                function_calling_config=glm.FunctionCallingConfig(
-                    mode=glm.FunctionCallingConfig.Mode.ANY
-                )
-            )
-
-        _message = current_message
-        _tool_config = tool_config
-
-        def _send():
-            kwargs = {}
-            if _tool_config:
-                kwargs["tool_config"] = _tool_config
-            return chat.send_message(_message, **kwargs)
-
-        response = await anyio.to_thread.run_sync(_send)
-        is_first_turn = False
-
-        if not response or not response.candidates:
-            return {
-                "success": False,
-                "message": "El modelo no generó una respuesta válida.",
-                "error": "NoCandidates",
-            }
-
-        model_content = response.candidates[0].content
-        finish_reason = response.candidates[0].finish_reason
-
-        print(f"🔍 Finish reason: {finish_reason} | Parts: {len(model_content.parts)}")
-        for i, p in enumerate(model_content.parts):
-            has_fc = hasattr(p, "function_call") and p.function_call.name
-            has_txt = hasattr(p, "text") and bool(p.text)
-            print(f"   Part[{i}]: function_call={has_fc} | text={has_txt}")
-
-        # Detectar function calls
-        function_calls = [
-            part.function_call
-            for part in model_content.parts
-            if hasattr(part, "function_call") and part.function_call.name
-        ]
-
-        # Sin function calls → respuesta final de texto
-        if not function_calls:
-            final_text = "".join(
-                part.text
-                for part in model_content.parts
-                if hasattr(part, "text") and part.text
-            ) or "Operación completada."
-
-            if event_callback:
-                await event_callback("saving", {"message": "Finalizando..."})
-
-            return {
-                "success": True,
-                "message": final_text,
-                "data": {"total_steps": step},
-                "error": None,
-            }
-
-        # ── Ejecutar herramientas ────────────────────────────────────────────
-        tool_response_parts = []
-
-        for call in function_calls:
-            tool_name = call.name
-            args = {key: value for key, value in call.args.items()} if hasattr(call, "args") else {}
-
-            if user_id:
-                args["user_id"] = user_id
-
-            if event_callback:
-                await event_callback("executing", {"message": f"Ejecutando {tool_name}..."})
-
-            print(f"🔧 Ejecutando: {tool_name} | args: {args}")
-
-            result = (
-                await manager.call_tool(tool_name, args)
-                if manager
-                else {"error": "Manager no encontrado"}
-            )
-
-            tool_result_text = result.get("result", result.get("error", "Sin resultado"))
-            print(f"   ↳ {tool_name}: {str(tool_result_text)[:200]}")
-
-            try:
-                tool_result_payload = (
-                    json.loads(tool_result_text)
-                    if isinstance(tool_result_text, str)
-                    else tool_result_text
-                )
-                if isinstance(tool_result_payload, dict) and tool_result_payload.get("success") == False:
-                    has_tool_error = True
-            except (json.JSONDecodeError, TypeError):
-                tool_result_payload = {"text": tool_result_text}
-
-            tool_response_parts.append(
-                glm.Part(
-                    function_response=glm.FunctionResponse(
-                        name=tool_name,
-                        response=tool_result_payload,
+            # Primer turno: forzar uso de herramienta si hay tools disponibles
+            tool_config = None
+            if gemini_tools and is_first_turn:
+                tool_config = glm.ToolConfig(
+                    function_calling_config=glm.FunctionCallingConfig(
+                        mode=glm.FunctionCallingConfig.Mode.ANY
                     )
                 )
-            )
 
-        # Si hubo error, reconstruir el system prompt antes del siguiente turno
-        # Nota: Gemini no permite cambiar system_instruction en mid-session,
-        # pero sí podemos incluir el hint en el mensaje de tool response.
-        # ✅ DESPUÉS:
-        if has_tool_error:
-            return {
-                "success": False,
-                "message": "Hubo un problema ejecutando una acción. Por favor intenta de nuevo.",
-                "data": {"total_steps": step},
-                "error": "ToolExecutionError",
-            }
+            _message = current_message
+            _tool_config = tool_config
 
-        current_message = tool_response_parts
+            def _send():
+                kwargs = {}
+                if _tool_config:
+                    kwargs["tool_config"] = _tool_config
+                return chat.send_message(_message, **kwargs)
+
+            response = await anyio.to_thread.run_sync(_send)
+            is_first_turn = False
+
+            if not response or not response.candidates:
+                return {
+                    "success": False,
+                    "message": "El modelo no generó una respuesta válida.",
+                    "error": "NoCandidates",
+                }
+
+            model_content = response.candidates[0].content
+            finish_reason = response.candidates[0].finish_reason
+
+            print(f"🔍 Finish reason: {finish_reason} | Parts: {len(model_content.parts)}")
+            for i, p in enumerate(model_content.parts):
+                has_fc = hasattr(p, "function_call") and p.function_call.name
+                has_txt = hasattr(p, "text") and bool(p.text)
+                print(f"   Part[{i}]: function_call={has_fc} | text={has_txt}")
+
+            # Detectar function calls
+            function_calls = [
+                part.function_call
+                for part in model_content.parts
+                if hasattr(part, "function_call") and part.function_call.name
+            ]
+
+            # Sin function calls → respuesta final de texto
+            if not function_calls:
+                final_text = "".join(
+                    part.text
+                    for part in model_content.parts
+                    if hasattr(part, "text") and part.text
+                ) or "Operación completada."
+
+                if event_callback:
+                    await event_callback("saving", {"message": "Finalizando..."})
+
+                return {
+                    "success": True,
+                    "message": final_text,
+                    "data": {"total_steps": step},
+                    "error": None,
+                }
+            
+            async with timer("...Tiempo empleado ejecutando herramientas en agenTask : "):
+
+                # ── Ejecutar herramientas ────────────────────────────────────────────
+                tool_response_parts = []
+
+                for call in function_calls:
+                    tool_name = call.name
+                    args = {key: value for key, value in call.args.items()} if hasattr(call, "args") else {}
+
+                    if user_id:
+                        args["user_id"] = user_id
+
+                    if event_callback:
+                        await event_callback("executing", {"message": f"Ejecutando {tool_name}..."})
+
+                    print(f"🔧 Ejecutando: {tool_name} | args: {args}")
+
+                    result = (
+                        await manager.call_tool(tool_name, args)
+                        if manager
+                        else {"error": "Manager no encontrado"}
+                    )
+
+                    tool_result_text = result.get("result", result.get("error", "Sin resultado"))
+                    print(f"   ↳ {tool_name}: {str(tool_result_text)[:200]}")
+
+                    try:
+                        tool_result_payload = (
+                            json.loads(tool_result_text)
+                            if isinstance(tool_result_text, str)
+                            else tool_result_text
+                        )
+                        if isinstance(tool_result_payload, dict) and tool_result_payload.get("success") == False:
+                            has_tool_error = True
+                    except (json.JSONDecodeError, TypeError):
+                        tool_result_payload = {"text": tool_result_text}
+
+                    tool_response_parts.append(
+                        glm.Part(
+                            function_response=glm.FunctionResponse(
+                                name=tool_name,
+                                response=tool_result_payload,
+                            )
+                        )
+                    )
+
+            # Si hubo error, reconstruir el system prompt antes del siguiente turno
+            # Nota: Gemini no permite cambiar system_instruction en mid-session,
+            # pero sí podemos incluir el hint en el mensaje de tool response.
+            # ✅ DESPUÉS:
+            if has_tool_error:
+                return {
+                    "success": False,
+                    "message": "Hubo un problema ejecutando una acción. Por favor intenta de nuevo.",
+                    "data": {"total_steps": step},
+                    "error": "ToolExecutionError",
+                }
+
+            current_message = tool_response_parts
 
     return {
         "success": False,
