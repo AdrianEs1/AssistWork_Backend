@@ -103,7 +103,7 @@ async def orchestrator(
 
     # ── 5. Crear modelo y ChatSession ───────────────────────────────────────
     model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
+        model_name="gemini-3.1-flash-lite-preview",
         tools=gemini_tools or [],
         system_instruction=system_instruction,
         generation_config=genai.GenerationConfig(

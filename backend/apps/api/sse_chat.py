@@ -17,6 +17,7 @@ from apps.api.dependencies import get_user_from_token
 from apps.models.user import User
 from apps.models.message import Message
 from apps.services.orchestrator.orchestrator_service import orchestrator
+from apps.services.orchestrator.time_spent_specific import timer
 from apps.services.conversation.conversation_service import conversation_service
 from apps.services.memory.qdrant_service import store_message, search_context
 from apps.middleware.subscription_middleware import (
@@ -183,16 +184,17 @@ async def sse_stream(
                 if title:
                     conversation.title = title
 
+            async with timer("...Tiempo empleado buscando contexto: "):
             # 4.4 Contexto semántico
-            context_list = search_context(
-                query=message,
-                user_id=str(current_user.id),
-                conversation_id=str(conversation.id),
-                limit=10,
-                score_threshold=0.5,
-            )
-            context_text = "\n".join(context_list) if context_list else ""
-            print(f"🔍 Contexto recuperado: {len(context_list)} mensajes")
+                context_list = search_context(
+                    query=message,
+                    user_id=str(current_user.id),
+                    conversation_id=str(conversation.id),
+                    limit=10,
+                    score_threshold=0.5,
+                )
+                context_text = "\n".join(context_list) if context_list else ""
+                print(f"🔍 Contexto recuperado: {len(context_list)} mensajes")
 
             # Recuperar el historial previo excluyendo el último mensaje que acabamos de meter
             past_messages = db.query(Message).filter(
