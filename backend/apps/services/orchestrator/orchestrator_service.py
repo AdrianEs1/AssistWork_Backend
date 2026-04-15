@@ -35,6 +35,7 @@ async def orchestrator(
     async with timer("...Tiempo empleado Analizando peticion.."):
         intent = classify_intent(user_input)
         print(f"🎯 Intención detectada: {intent}")
+        print(f"\nEste es el user_id: {user_id}\n")
 
     # ── 2. Cargar herramientas MCP (Solo si es agentTask) ───────────────────
     manager = None
@@ -137,7 +138,7 @@ async def orchestrator(
         if gemini_tools and is_first_turn:
             tool_config = glm.ToolConfig(
                 function_calling_config=glm.FunctionCallingConfig(
-                    mode=glm.FunctionCallingConfig.Mode.AUTO
+                    mode=glm.FunctionCallingConfig.Mode.ANY
                 )
             )
 
@@ -218,18 +219,14 @@ async def orchestrator(
             tool_result_text = result.get("result", result.get("error", "Sin resultado"))
             print(f"   ↳ {tool_name}: {str(tool_result_text)[:200]}")
 
-            # Detectar error en herramienta para ajustar el prompt en el siguiente turno
-            if isinstance(tool_result_text, str) and (
-                '"success": false' in tool_result_text or "error" in tool_result_text.lower()
-            ):
-                has_tool_error = True
-
             try:
                 tool_result_payload = (
                     json.loads(tool_result_text)
                     if isinstance(tool_result_text, str)
                     else tool_result_text
                 )
+                if isinstance(tool_result_payload, dict) and tool_result_payload.get("success") == False:
+                    has_tool_error = True
             except (json.JSONDecodeError, TypeError):
                 tool_result_payload = {"text": tool_result_text}
 
@@ -245,11 +242,14 @@ async def orchestrator(
         # Si hubo error, reconstruir el system prompt antes del siguiente turno
         # Nota: Gemini no permite cambiar system_instruction en mid-session,
         # pero sí podemos incluir el hint en el mensaje de tool response.
+        # ✅ DESPUÉS:
         if has_tool_error:
-            from apps.services.prompt.agent_identity import TROUBLESHOOTING_HINT
-            tool_response_parts.append(
-                glm.Part(text=f"\n[SISTEMA]: {TROUBLESHOOTING_HINT}")
-            )
+            return {
+                "success": False,
+                "message": "Hubo un problema ejecutando una acción. Por favor intenta de nuevo.",
+                "data": {"total_steps": step},
+                "error": "ToolExecutionError",
+            }
 
         current_message = tool_response_parts
 
