@@ -16,6 +16,8 @@ class MCPClientManager:
         self.sessions: Dict[str, ClientSession] = {}
         self.exit_stacks: Dict[str, AsyncExitStack] = {}
         self.tool_to_server: Dict[str, Dict[str, str]] = {}
+        self._cached_tools: Optional[List[Dict[str, Any]]] = None
+        self._cached_gemini_tools: Optional[List[Tool]] = None
 
     # ------------------------------------------------------------------
     # Conexión
@@ -59,6 +61,9 @@ class MCPClientManager:
                 del self.exit_stacks[server_name]
                 print(f"❌ [{self.user_id[:8]}] Error conectando a {server_name}: {e}")
                 raise
+            finally:
+                self._cached_tools = None
+                self._cached_gemini_tools = None
 
         elif isinstance(config, str) and config.startswith("http"):
             raise NotImplementedError("SSE connections not implemented yet.")
@@ -66,9 +71,13 @@ class MCPClientManager:
             raise ValueError(f"Configuración inválida para el servidor '{server_name}'")
 
     async def connect_all(self):
-        """Conecta a todos los servidores definidos en MCP_CONFIG."""
-        for server_name in MCP_CONFIG.keys():
-            await self.connect_server(server_name)
+        """Conecta a todos los servidores definidos en MCP_CONFIG en paralelo."""
+        tasks = [self.connect_server(server_name) for server_name in MCP_CONFIG.keys()]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for name, res in zip(MCP_CONFIG.keys(), results):
+            if isinstance(res, Exception):
+                print(f"⚠️ Error conectando en paralelo a {name}: {res}")
 
     # ------------------------------------------------------------------
     # Cierre de sesiones
@@ -80,6 +89,8 @@ class MCPClientManager:
             await self.exit_stacks[server_name].aclose()
             self.exit_stacks.pop(server_name, None)
             self.sessions.pop(server_name, None)
+            self._cached_tools = None
+            self._cached_gemini_tools = None
             print(f"🔌 [{self.user_id[:8]}] Sesión cerrada: {server_name}")
 
     async def cleanup(self):
@@ -87,6 +98,8 @@ class MCPClientManager:
         for server_name in list(self.exit_stacks.keys()):
             await self.close_server(server_name)
         self.tool_to_server.clear()
+        self._cached_tools = None
+        self._cached_gemini_tools = None
         print(f"🧹 [{self.user_id[:8]}] Todas las sesiones cerradas.")
 
     # ------------------------------------------------------------------
@@ -96,29 +109,47 @@ class MCPClientManager:
     async def get_all_tools(self) -> List[Dict[str, Any]]:
         """
         Obtiene todas las herramientas de todos los servidores conectados.
-        Retorna una lista de diccionarios con {'server': str, 'tool': tool_object}.
+        Retorna la versión cacheada si existe, de lo contrario las carga en paralelo.
         """
+        if self._cached_tools is not None:
+            # print(f"🚀 Usando herramientas cacheadas para {self.user_id[:8]}")
+            return self._cached_tools
+
         all_tools_with_context = []
 
-        for server_name, session in self.sessions.items():
+        async def _fetch_tools(server_name, session):
             try:
                 print(f"🔍 Cargando tools de: {server_name}")
                 result = await session.list_tools()
-
+                tools_for_server = []
                 for tool in result.tools:
-                    # Guardamos la herramienta con su contexto de servidor
-                    all_tools_with_context.append({
+                    tools_for_server.append({
                         "server": server_name,
                         "tool": tool
                     })
-
                 print(f"✅ {server_name}: {len(result.tools)} tools")
-
+                return tools_for_server
             except Exception as e:
-                import traceback
-                print(f"❌ Error obteniendo tools de {server_name}:")
-                traceback.print_exc()
+                print(f"❌ Error obteniendo tools de {server_name}: {e}")
+                return []
 
+        # Crear tareas para todos los servidores conectados
+        tasks = [
+            _fetch_tools(server_name, session) 
+            for server_name, session in self.sessions.items()
+        ]
+        
+        if not tasks:
+            return []
+
+        # Ejecutar en paralelo
+        results = await asyncio.gather(*tasks)
+        
+        # Aplanar resultados
+        for tools_list in results:
+            all_tools_with_context.extend(tools_list)
+
+        self._cached_tools = all_tools_with_context
         return all_tools_with_context
 
     def _clean_schema(self, schema: Any) -> Any:
@@ -156,8 +187,11 @@ class MCPClientManager:
     def to_gemini_tools(self, mcp_tools_with_context: List[Dict[str, Any]]) -> List[Tool]:
         """
         Convierte herramientas MCP a formato Gemini Tool, prefijando nombres para evitar colisiones.
-        Ejemplo: 'gmail_send_email', 'teams_list_chats'.
+        Retorna la versión cacheada si existe.
         """
+        if self._cached_gemini_tools is not None:
+            return self._cached_gemini_tools
+
         declarations = []
         self.tool_to_server.clear() # Limpiar mapeo previo
 
@@ -187,10 +221,12 @@ class MCPClientManager:
                 print(f"❌ Tool inválida descartada: {prefixed_name} -> {e}")
 
         if not declarations:
+            self._cached_gemini_tools = []
             return []
 
         # Retornamos envuelto en Tool
-        return [Tool(function_declarations=declarations)]
+        self._cached_gemini_tools = [Tool(function_declarations=declarations)]
+        return self._cached_gemini_tools
 
     # ------------------------------------------------------------------
     # Ejecución de herramientas con reconexión automática
