@@ -1,25 +1,14 @@
-"""
-Server MCP para Manejo de Archivos Locales (GCS)
-Permite listar y leer archivos PDF, DOCX o TXT subidos por el usuario en BD/GCS.
-"""
-
-from typing import Optional, Dict, Any, List
-from mcp.server.fastmcp import FastMCP
 import os
-import sys
-
-# Ajustar path para importar desde `apps`
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
+import re
+import fitz  # PyMuPDF
+import docx
+from typing import Optional, Dict, Any, List
 from sqlalchemy.orm import Session
+
 from apps.database import SessionLocal
 from apps.models.context_file import ContextFile
 from apps.services.storage.gcs_service import download_to_memory, file_exists
-import fitz  # PyMuPDF
-import docx
-import re
-
-mcp = FastMCP("LocalFiles-Server")
+from apps.services.tool_registry import tool
 
 # --- Utilidades ---
 def normalize_name(name: str) -> str:
@@ -33,11 +22,12 @@ def sanitize_query(query: str) -> str:
         q = re.sub(pattern, "", q)
     return q.strip("'\"").strip()
 
+# --- HERRAMIENTAS ---
 
-@mcp.tool()
+@tool(group="localfiles")
 async def list_local_files(user_id: str, query: Optional[str] = None, max_results: int = 10) -> str:
     """
-    Lista archivos (como PDFs, DOCXs, TXTs) que el usuario 'user_id' ha adjuntado previamente al sistema.
+    Lista archivos (como PDFs, DOCXs, TXTs) que el usuario ha adjuntado previamente al sistema.
     Si se provee 'query', filtrará los archivos por coincidencia en el nombre.
     """
     db: Session = SessionLocal()
@@ -76,8 +66,7 @@ async def list_local_files(user_id: str, query: Optional[str] = None, max_result
     finally:
         db.close()
 
-
-@mcp.tool()
+@tool(group="localfiles")
 async def read_local_file(user_id: str, file_path: str) -> str:
     """
     Lee el contenido en texto plano de un archivo utilizando su 'file_path'.
@@ -117,6 +106,3 @@ async def read_local_file(user_id: str, file_path: str) -> str:
         return f"Error al intentar leer el archivo: {str(e)}"
     finally:
         db.close()
-
-if __name__ == "__main__":
-    mcp.run()

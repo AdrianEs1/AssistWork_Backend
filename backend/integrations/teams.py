@@ -1,18 +1,13 @@
-print("🚀 IMPORTANDO TEAMS MCP...")
 import json
 from typing import Optional
-from mcp.server.fastmcp import FastMCP
-
 from apps.services.oauth.microsoft_service_base.microsoft_service_base import MicrosoftServiceBase
+from apps.services.tool_registry import tool
 
-print("MicrosoftServiceBase importado correctamente")
 # --- SERVICE ---
 
 class TeamsService(MicrosoftServiceBase):
     def __init__(self):
         super().__init__("teams")
-
-    # -------------------- CHATS --------------------
 
     def list_chats(self, user_id: str):
         token = self.get_access_token(user_id)
@@ -24,13 +19,11 @@ class TeamsService(MicrosoftServiceBase):
 
     def send_message(self, user_id: str, chat_id: str, content: str):
         token = self.get_access_token(user_id)
-
         body = {
             "body": {
                 "content": content
             }
         }
-
         return self._request(
             "POST",
             f"/chats/{chat_id}/messages",
@@ -38,22 +31,15 @@ class TeamsService(MicrosoftServiceBase):
             json=body
         )
 
-# --- INSTANCE ---
-
 teams_instance = TeamsService()
-
-# --- MCP ---
-
-mcp = FastMCP("AssistWork-Teams")
 
 # -------------------- TOOLS --------------------
 
-@mcp.tool()
-async def list_chats(user_id: str) -> str:
+@tool(group="teams")
+async def list_teams_chats(user_id: str) -> str:
     """Lista los chats del usuario en Microsoft Teams"""
     try:
         data = teams_instance.list_chats(user_id)
-
         chats = [
             {
                 "chat_id": chat.get("id"),
@@ -62,23 +48,19 @@ async def list_chats(user_id: str) -> str:
             }
             for chat in data.get("value", [])
         ]
-
         return json.dumps({
             "success": True,
             "count": len(chats),
             "chats": chats
         }, indent=2)
-
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
-
-@mcp.tool()
-async def list_messages(user_id: str, chat_id: str) -> str:
-    """Lista mensajes de un chat"""
+@tool(group="teams")
+async def list_teams_messages(user_id: str, chat_id: str) -> str:
+    """Lista mensajes de un chat de Teams"""
     try:
         data = teams_instance.get_messages(user_id, chat_id)
-
         messages = [
             {
                 "message_id": msg.get("id"),
@@ -88,39 +70,29 @@ async def list_messages(user_id: str, chat_id: str) -> str:
             }
             for msg in data.get("value", [])
         ]
-
         return json.dumps({
             "success": True,
             "count": len(messages),
             "messages": messages
         }, indent=2)
-
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
-
-@mcp.tool()
-async def send_message(user_id: str, chat_id: str, content: str) -> str:
+@tool(group="teams")
+async def send_teams_message(user_id: str, chat_id: str, content: str) -> str:
     """Envía un mensaje a un chat de Teams"""
     try:
         data = teams_instance.send_message(user_id, chat_id, content)
-
         return json.dumps({
             "success": True,
             "message_id": data.get("id"),
             "status_message": "✅ Mensaje enviado en Teams"
         })
-
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
-
-@mcp.tool()
-async def test_connection(user_id: str) -> str:
-    """Verifica conexión con Microsoft"""
+@tool(group="teams")
+async def test_teams_connection(user_id: str) -> str:
+    """Verifica conexión con Microsoft Teams"""
     result = teams_instance.test_connection(user_id)
     return json.dumps(result)
-
-
-if __name__ == "__main__":
-    mcp.run()

@@ -1,11 +1,17 @@
 import os
+import time
 import asyncio
-from typing import Dict, Any, List, Optional
+from collections import OrderedDict
+from typing import Dict, Any, List, Optional, Callable
 from contextlib import AsyncExitStack
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from google.generativeai.types import FunctionDeclaration, Tool
 from mcp_config import MCP_CONFIG, ENV
+
+from google.adk.tools import FunctionTool
+from google.adk.tools.base_tool import BaseTool
+import inspect
 
 
 class MCPClientManager:
@@ -26,7 +32,7 @@ class MCPClientManager:
     async def connect_server(self, server_name: str):
         """Conecta a un servidor MCP. Si ya está conectado, no hace nada."""
         if server_name in self.sessions:
-            return
+            return  # ✅ Ya conectado, no tocar el cache
 
         server_config = MCP_CONFIG.get(server_name)
         if not server_config:
@@ -46,7 +52,6 @@ class MCPClientManager:
                     "PYTHONUTF8": "1",
                 }
             )
-
             stack = AsyncExitStack()
             self.exit_stacks[server_name] = stack
 
@@ -55,15 +60,17 @@ class MCPClientManager:
                 session = await stack.enter_async_context(ClientSession(read, write))
                 await session.initialize()
                 self.sessions[server_name] = session
+                # ✅ Solo invalidar cache cuando se conecta un servidor NUEVO
+                self._cached_tools = None
+                self._cached_gemini_tools = None
                 print(f"✅ [{self.user_id[:8]}] Conectado a MCP: {server_name}")
+
             except Exception as e:
+                # ✅ Solo limpiar en caso de error
                 await stack.aclose()
                 del self.exit_stacks[server_name]
                 print(f"❌ [{self.user_id[:8]}] Error conectando a {server_name}: {e}")
                 raise
-            finally:
-                self._cached_tools = None
-                self._cached_gemini_tools = None
 
         elif isinstance(config, str) and config.startswith("http"):
             raise NotImplementedError("SSE connections not implemented yet.")
@@ -224,9 +231,68 @@ class MCPClientManager:
             self._cached_gemini_tools = []
             return []
 
-        # Retornamos envuelto en Tool
+    # Retornamos envuelto en Tool
         self._cached_gemini_tools = [Tool(function_declarations=declarations)]
         return self._cached_gemini_tools
+
+    
+
+    def to_adk_tools(self, mcp_tools_with_context: List[Dict[str, Any]]) -> List[Callable]:
+        adk_functions = []
+
+        for item in mcp_tools_with_context:
+            server = item["server"]
+            tool_info = item["tool"]
+            prefixed_name = f"{server}_{tool_info.name}"
+
+            schema = tool_info.inputSchema
+            props = schema.get("properties", {}) if isinstance(schema, dict) else {}
+
+            if prefixed_name not in self.tool_to_server:
+                self.tool_to_server[prefixed_name] = {
+                    "server": server,
+                    "original_name": tool_info.name
+                }
+
+            # Parámetros que el modelo NO debe proveer (los inyectamos nosotros)
+            INJECTED_PARAMS = {"user_id", "userId", "user", "uid"}
+
+            def make_wrapper(t_name, mgr, parameters, injected_user_id):
+                # Filtrar params que inyectamos nosotros
+                model_params = {
+                    k: v for k, v in parameters.items() 
+                    if k not in INJECTED_PARAMS
+                }
+
+                async def tool_fn(**kwargs) -> str:
+                    # Inyectar user_id real automáticamente
+                    kwargs["user_id"] = injected_user_id
+                    result = await mgr.call_tool(t_name, kwargs)
+                    # Retornar string para ADK
+                    if isinstance(result, dict):
+                        return result.get("result") or result.get("error") or str(result)
+                    return str(result)
+
+                # Firma dinámica solo con los params que el modelo debe llenar
+                params = []
+                for p_name in model_params.keys():
+                    params.append(
+                        inspect.Parameter(
+                            p_name,
+                            inspect.Parameter.KEYWORD_ONLY,
+                            annotation=str,
+                            default=inspect.Parameter.empty
+                        )
+                    )
+                tool_fn.__signature__ = inspect.Signature(params)
+                tool_fn.__name__ = t_name
+                tool_fn.__doc__ = tool_info.description or f"Tool {t_name}"
+                return tool_fn
+
+            wrapper = make_wrapper(prefixed_name, self, props, self.user_id)
+            adk_functions.append(wrapper)
+
+        return adk_functions
 
     # ------------------------------------------------------------------
     # Ejecución de herramientas con reconexión automática
@@ -263,8 +329,7 @@ class MCPClientManager:
             except Exception as e2:
                 return {"success": False, "error": str(e2)}
 
-    async def _execute_tool(self, server_name: str, tool_name: str, arguments: dict) -> dict:
-        """Ejecuta la herramienta en la sesión activa del servidor."""
+    async def _execute_tool(self, server_name: str, tool_name: str, arguments: dict) -> str:
         session = self.sessions[server_name]
         result = await session.call_tool(tool_name, arguments)
 
@@ -272,33 +337,59 @@ class MCPClientManager:
             item.text for item in result.content if item.type == "text"
         ).strip()
 
-        return {
-            "success": not result.isError,
-            "result": formatted_result or str(result),
-            "isError": result.isError,
-        }
+        if result.isError:
+            return f"Error ejecutando herramienta: {formatted_result}"
+
+        return formatted_result or "Herramienta ejecutada sin resultado."
 
 
 # ------------------------------------------------------------------
-# Registro global de managers — uno por user_id
+# Registro global de managers — uno por user_id (con evicción LRU)
 # ------------------------------------------------------------------
 
-_managers: Dict[str, MCPClientManager] = {}
+# Límite de managers simultáneos por instancia.
+# Cada manager abre 3 subprocesos MCP stdio (~70MB c/u).
+# Con 2GB de RAM en Cloud Run: 2048MB ÷ 70MB ≈ 25 managers seguros.
+# Cloud Run escalará una nueva instancia cuando se supere --concurrency=25.
+MAX_MANAGERS = 25
+
+_managers: OrderedDict[str, MCPClientManager] = OrderedDict()
+_manager_last_used: Dict[str, float] = {}
 _managers_lock = asyncio.Lock()
 
 
+async def _evict_oldest() -> None:
+    """Evicta el manager menos recientemente usado. Llamar con el lock ya tomado."""
+    if not _manager_last_used:
+        return
+    oldest_user = min(_manager_last_used, key=lambda uid: _manager_last_used[uid])
+    manager = _managers.pop(oldest_user, None)
+    _manager_last_used.pop(oldest_user, None)
+    if manager:
+        # Limpiar en background para no bloquear el request actual
+        asyncio.create_task(manager.cleanup())
+        print(f"♻️  LRU evict: manager de {oldest_user[:8]} eliminado")
+
+
 async def get_manager(user_id: str) -> MCPClientManager:
-    """
-    Retorna el MCPClientManager asociado al user_id.
-    Si no existe, lo crea y conecta todos los servidores.
-    Thread-safe con asyncio.Lock.
-    """
     async with _managers_lock:
-        if user_id not in _managers:
-            manager = MCPClientManager(user_id)
-            await manager.connect_all()
-            _managers[user_id] = manager
-        return _managers[user_id]
+        if user_id in _managers:
+            # ✅ Ya existe — actualizar timestamp y verificar sesiones
+            _manager_last_used[user_id] = time.time()
+            manager = _managers[user_id]
+            if not manager.sessions:  # Reconectar si las sesiones cayeron
+                await manager.connect_all()
+            return manager
+
+        # 🆕 Usuario nuevo — evictar si superamos el límite
+        if len(_managers) >= MAX_MANAGERS:
+            await _evict_oldest()
+
+        manager = MCPClientManager(user_id)
+        await manager.connect_all()
+        _managers[user_id] = manager
+        _manager_last_used[user_id] = time.time()
+        return manager
 
 
 async def release_manager(user_id: str):
@@ -307,6 +398,7 @@ async def release_manager(user_id: str):
     """
     async with _managers_lock:
         manager = _managers.pop(user_id, None)
+        _manager_last_used.pop(user_id, None)
     if manager:
         await manager.cleanup()
 

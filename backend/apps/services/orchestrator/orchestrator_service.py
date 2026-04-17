@@ -1,21 +1,32 @@
-import google.generativeai as genai
-import google.ai.generativelanguage as glm
-from typing import Callable, Awaitable, Optional
+import google.adk as adk
+from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.events import Event
+from google.adk.sessions import InMemorySessionService
+from google.genai.types import Content, Part
+from typing import Callable, Awaitable, Optional, List
 import anyio
 import json
+import traceback
 
-from apps.services.mcp_client.mcp_manager import get_manager
+import integrations
+from integrations import TOOL_REGISTRY
 from apps.services.prompt.agent_identity import build_system_prompt
 from apps.services.orchestrator.intent_classifier import classify_intent
 from config import GOOGLE_API_KEY
 
-#Funciones para determinar el tiempo gastado durante un loop en el orchestrator
+# Funciones para determinar el tiempo gastado durante un loop en el orchestrator
 from .time_spent_global import measure_time
 from .time_spent_specific import timer
 
+import google.generativeai as genai
 genai.configure(api_key=GOOGLE_API_KEY)
 
 EventCallback = Optional[Callable[[str, dict], Awaitable[None]]]
+
+# Usamos un session service global durante la ejecución del proceso para el historial
+# En una app de producción real, esto podría estar en una base de datos
+_global_session_service = InMemorySessionService()
 
 @measure_time
 async def orchestrator(
@@ -25,9 +36,8 @@ async def orchestrator(
     event_callback: EventCallback = None,
     conversation_history: Optional[list] = None,
 ) -> dict:
-    """Orquestador unificado con system prompt dinámico y agente loop MCP."""
+    """Orquestador unificado utilizando Google ADK para la ejecución del agente."""
 
-    
     if event_callback:
         await event_callback("analyzing", {"message": "Analizando tu petición..."})
 
@@ -35,234 +45,184 @@ async def orchestrator(
     async with timer("...Tiempo empleado Analizando peticion.."):
         intent = classify_intent(user_input)
         print(f"🎯 Intención detectada: {intent}")
-        print(f"\nEste es el user_id: {user_id}\n")
 
-    # ── 2. Cargar herramientas MCP (Solo si es agentTask) ───────────────────
-    manager = None
-    gemini_tools = []
+    # ── 2. Cargar herramientas (In-Process) ──────────────────────────────────
+    adk_tools = []
     disconnected_apps = []
-
-    
 
     if intent == "agentTask":
         async with timer("...Tiempo empleado cargando herramientas en agenTask : "):
             try:
-                manager = await get_manager(user_id)
-                mcp_tools = await manager.get_all_tools()
-                gemini_tools = manager.to_gemini_tools(mcp_tools)
+                # Obtenemos las herramientas directamente del registry (sin subprocesos)
+                adk_tools = TOOL_REGISTRY.get_adk_tools(user_id=user_id)
+                
+                # Detectar apps disponibles dinámicamente
+                registered_groups = {t["group"] for t in TOOL_REGISTRY.tools.values()}
+                
+                # Mapa de grupos a nombres legibles para el prompt
+                app_names = {
+                    "gmail": "Gmail",
+                    "teams": "Microsoft Teams",
+                    "localfiles": "Local Files"
+                }
+                
+                for group_id, group_name in app_names.items():
+                    if group_id not in registered_groups:
+                        disconnected_apps.append(group_name)
 
-                total_decls = sum(len(t.function_declarations) for t in gemini_tools)
-                print(f"🛠️ Tools cargadas: {len(mcp_tools)} MCP | {total_decls} Gemini decls")
-
+                print(f"🛠️ Tools ADK cargadas: {len(adk_tools)}")
             except Exception:
-                import traceback
-                print("⚠️ Error cargando herramientas MCP:")
+                print("⚠️ Error cargando herramientas del registry:")
                 traceback.print_exc()
     else:
-        print(f"ℹ️ Saltando carga de herramientas MCP para intención: {intent}")
-
-    # ── 2. Detectar apps desconectadas (rápido, sin llamadas extra) ─────────
-    # Inferimos del resultado del test de conexión que ya hace el manager.
-    # Si prefieres, puedes pasar `connected_apps` como parámetro desde el frontend.
-    tool_names = [
-        decl.name
-        for tool in gemini_tools
-        for decl in tool.function_declarations
-    ]
-    if not any("gmail" in t for t in tool_names):
-        disconnected_apps.append("Gmail")
-    if not any("teams" in t for t in tool_names):
-        disconnected_apps.append("Microsoft Teams")
-
-    async with timer("...Tiempo empleado construyendo system promp dinamico : "):
+        print(f"ℹ️ Saltando carga de herramientas para intención: {intent}")
 
     # ── 3. Construir system prompt dinámico ─────────────────────────────────
-        is_first_message = not conversation_history  # Sin historial = primer turno
+    is_first_message = not conversation_history
+    system_instruction = build_system_prompt(
+        intent=intent,
+        disconnected_apps=disconnected_apps,
+        is_first_message=is_first_message,
+        has_tool_error=False,
+    )
 
-        system_instruction = build_system_prompt(
-            intent=intent,
-            disconnected_apps=disconnected_apps,
-            is_first_message=is_first_message,
-            has_tool_error=False,
+    # ── 4. Configurar Agente y Runner ADK ─────────────────────────────────────
+    agent = Agent(
+        name="AssistWork_Agent",
+        model="gemini-3.1-flash-lite-preview", # Mantenemos el modelo solicitado
+        instruction=system_instruction,
+        tools=adk_tools,
+    )
+
+    # Usamos el user_id para identificar al usuario en ADK
+    session_id = user_id or "anonymous_session"
+
+    # ── La sesión SIEMPRE debe existir antes de llamar a run_async ───────────
+    # CRÍTICO: pasamos session_id explícitamente para que el Runner pueda
+    # encontrarla al buscarlo por ese mismo ID.
+    try:
+        session = await _global_session_service.create_session(
+            user_id=session_id,
+            app_name="AssistWork_Agent",
+            session_id=session_id,   # ← fijamos el ID para que coincida con run_async
+        )
+    except Exception as e:
+        print(f"⚠️ Error creando sesión ADK (intentando obtener existente): {e}")
+        session = await _global_session_service.get_session(
+            user_id=session_id,
+            app_name="AssistWork_Agent",
+            session_id=session_id,
         )
 
-        print(f"\nEsto es la System_instruction que se envia al LLM según la intencion {intent}:\n {system_instruction}\n")
+    # Usamos el ID real del objeto sesión por si ADK lo normalizó
+    adk_session_id = session.id if session else session_id
+    print(f"✅ Sesión ADK lista: {adk_session_id}")
 
-    # ── 4. Construir historial para ChatSession ──────────────────────────────
-    history_for_chat = []
+    # IMPORTANTE: Si hay historial externo, lo inyectamos en la sesión de ADK
+    # append_event(session, event) — primer arg es el objeto Session, no el ID
+    if conversation_history and session:
+        try:
+            for msg in conversation_history:
+                # ADK reconoce 'user' para el usuario y el nombre del agente para el modelo
+                author = "user" if msg.get("role") in ["user", "tool_response"] else "AssistWork_Agent"
+                content_obj = Content(parts=[Part(text=msg.get("content", ""))])
+                hist_event = Event(author=author, content=content_obj)
+                await _global_session_service.append_event(session, hist_event)
+        except Exception as e:
+            print(f"⚠️ Error cargando historial en ADK session: {e}")
 
-    if context:
-        history_for_chat.append({
-            "role": "user",
-            "parts": [f"CONTEXTO SEMÁNTICO RELEVANTE:\n{context}"],
-        })
-        history_for_chat.append({
-            "role": "model",
-            "parts": ["Entendido, tendré este contexto en cuenta."],
-        })
+    runner = Runner(
+        agent=agent,
+        app_name="AssistWork_Agent",
+        session_service=_global_session_service
+    )
 
-    if conversation_history:
-        for msg in conversation_history:
-            role = "user" if msg.get("role") in ["user", "tool_response"] else "model"
-            history_for_chat.append({"role": role, "parts": [msg.get("content", "")]})
+    # ── 5. Ejecutar con Runner de ADK y mapear eventos ────────────────────────
+    final_text = ""
+    total_steps = 0
 
-    async with timer("...Tiempo empleado construyendo modelo : "):
-        # ── 5. Crear modelo y ChatSession ───────────────────────────────────────
-        model = genai.GenerativeModel(
-            model_name="gemini-3.1-flash-lite-preview",
-            tools=gemini_tools or [],
-            system_instruction=system_instruction,
-            generation_config=genai.GenerationConfig(
-                temperature=0.4,
-                max_output_tokens=8000,
-            ),
-        )
+    try:
+        async with timer("...Tiempo empleado en ejecución ADK : "):
+            # Ejecutamos pasando el session_id para que use el historial cargado
+            # ADK v1.30+ requiere que el mensaje sea un objeto Content
+            async for event in runner.run_async(
+                new_message=Content(parts=[Part(text=user_input)]),
+                session_id=adk_session_id,
+                user_id=session_id
+            ):
+                total_steps += 1
 
-    chat = model.start_chat(history=history_for_chat)
 
-    # ── 6. Agent loop ────────────────────────────────────────────────────────
-    max_steps = 10
-    step = 0
-    current_message = user_input
-    is_first_turn = True
-    has_tool_error = False
-
-    # Si NO es agentTask, no forzamos tools y limitamos a 1 paso
-    if intent != "agentTask":
-        max_steps = 1
-    async with timer("...Tiempo empleado en loop de agentTask : "):
-        while step < max_steps:
-            step += 1
-
-            if event_callback and step > 1:
-                await event_callback("processing", {"message": f"Pensando... (Paso {step})"})
-
-            print(f"🧠 Llamando al LLM (Turno {step})...")
-
-            # Primer turno: forzar uso de herramienta si hay tools disponibles
-            tool_config = None
-            if gemini_tools and is_first_turn:
-                tool_config = glm.ToolConfig(
-                    function_calling_config=glm.FunctionCallingConfig(
-                        mode=glm.FunctionCallingConfig.Mode.ANY
-                    )
-                )
-
-            _message = current_message
-            _tool_config = tool_config
-
-            def _send():
-                kwargs = {}
-                if _tool_config:
-                    kwargs["tool_config"] = _tool_config
-                return chat.send_message(_message, **kwargs)
-
-            response = await anyio.to_thread.run_sync(_send)
-            is_first_turn = False
-
-            if not response or not response.candidates:
-                return {
-                    "success": False,
-                    "message": "El modelo no generó una respuesta válida.",
-                    "error": "NoCandidates",
-                }
-
-            model_content = response.candidates[0].content
-            finish_reason = response.candidates[0].finish_reason
-
-            print(f"🔍 Finish reason: {finish_reason} | Parts: {len(model_content.parts)}")
-            for i, p in enumerate(model_content.parts):
-                has_fc = hasattr(p, "function_call") and p.function_call.name
-                has_txt = hasattr(p, "text") and bool(p.text)
-                print(f"   Part[{i}]: function_call={has_fc} | text={has_txt}")
-
-            # Detectar function calls
-            function_calls = [
-                part.function_call
-                for part in model_content.parts
-                if hasattr(part, "function_call") and part.function_call.name
-            ]
-
-            # Sin function calls → respuesta final de texto
-            if not function_calls:
-                final_text = "".join(
-                    part.text
-                    for part in model_content.parts
-                    if hasattr(part, "text") and part.text
-                ) or "Operación completada."
-
-                if event_callback:
-                    await event_callback("saving", {"message": "Finalizando..."})
-
-                return {
-                    "success": True,
-                    "message": final_text,
-                    "data": {"total_steps": step},
-                    "error": None,
-                }
-            
-            async with timer("...Tiempo empleado ejecutando herramientas en agenTask : "):
-
-                # ── Ejecutar herramientas ────────────────────────────────────────────
-                tool_response_parts = []
-
-                for call in function_calls:
-                    tool_name = call.name
-                    args = {key: value for key, value in call.args.items()} if hasattr(call, "args") else {}
-
-                    if user_id:
-                        args["user_id"] = user_id
-
-                    if event_callback:
-                        await event_callback("executing", {"message": f"Ejecutando {tool_name}..."})
-
-                    print(f"🔧 Ejecutando: {tool_name} | args: {args}")
-
-                    result = (
-                        await manager.call_tool(tool_name, args)
-                        if manager
-                        else {"error": "Manager no encontrado"}
-                    )
-
-                    tool_result_text = result.get("result", result.get("error", "Sin resultado"))
-                    print(f"   ↳ {tool_name}: {str(tool_result_text)[:200]}")
-
-                    try:
-                        tool_result_payload = (
-                            json.loads(tool_result_text)
-                            if isinstance(tool_result_text, str)
-                            else tool_result_text
+                # ═══ DEBUG COMPLETO ═══
+                print(f"\n{'='*50}")
+                print(f"🔔 STEP {total_steps} | Tipo: {type(event).__name__}")
+                print(f"   author: {getattr(event, 'author', 'N/A')}")
+                print(f"   is_final_response: {event.is_final_response() if hasattr(event, 'is_final_response') else 'N/A'}")
+                
+                if hasattr(event, 'content') and event.content:
+                    for i, part in enumerate(event.content.parts):
+                        print(f"   Part[{i}]: {type(part).__name__}")
+                        if hasattr(part, 'text') and part.text:
+                            print(f"     text: {part.text[:100]}")
+                        if hasattr(part, 'function_call') and part.function_call:
+                            print(f"     🛠️ function_call: {part.function_call.name}")
+                            print(f"     args: {part.function_call.args}")
+                        if hasattr(part, 'function_response') and part.function_response:
+                            print(f"     ✅ function_response: {part.function_response.name}")
+                            print(f"     response: {str(part.function_response.response)[:200]}")
+                
+                if hasattr(event, 'error') and event.error:
+                    print(f"   ❌ ERROR en evento: {event.error}")
+                print(f"{'='*50}\n")
+                # ═══ FIN DEBUG ═══
+                
+                # Mapeo de eventos ADK -> Callbacks de UI
+                if event_callback and hasattr(event, 'content') and event.content:
+                    for part in event.content.parts:
+                        
+                        # Modelo decidió llamar una tool
+                        if hasattr(part, 'function_call') and part.function_call:
+                            # Quitar prefijo del servidor para mostrar nombre limpio
+                            tool_display = "_".join(part.function_call.name.split("_")[1:])
+                            await event_callback("executing", {
+                                "message": f"Ejecutando {tool_display}..."
+                            })
+                        
+                        # Tool respondió, modelo está procesando el resultado
+                        if hasattr(part, 'function_response') and part.function_response:
+                            await event_callback("processing", {
+                                "message": "Procesando resultado..."
+                            })
+                
+                # Extraer texto plano del objeto Content retornado por ADK
+                # Extraer texto de la respuesta final
+                if hasattr(event, "is_final_response") and event.is_final_response():
+                    content = getattr(event, "content", None)
+                    if content and hasattr(content, "parts") and content.parts:
+                        final_text = " ".join(
+                            p.text for p in content.parts 
+                            if hasattr(p, "text") and p.text
                         )
-                        if isinstance(tool_result_payload, dict) and tool_result_payload.get("success") == False:
-                            has_tool_error = True
-                    except (json.JSONDecodeError, TypeError):
-                        tool_result_payload = {"text": tool_result_text}
+                    else:
+                        final_text = str(content) if content else ""
+                    break
+                
 
-                    tool_response_parts.append(
-                        glm.Part(
-                            function_response=glm.FunctionResponse(
-                                name=tool_name,
-                                response=tool_result_payload,
-                            )
-                        )
-                    )
+        if event_callback:
+            await event_callback("saving", {"message": "Finalizando..."})
 
-            # Si hubo error, reconstruir el system prompt antes del siguiente turno
-            # Nota: Gemini no permite cambiar system_instruction en mid-session,
-            # pero sí podemos incluir el hint en el mensaje de tool response.
-            # ✅ DESPUÉS:
-            if has_tool_error:
-                return {
-                    "success": False,
-                    "message": "Hubo un problema ejecutando una acción. Por favor intenta de nuevo.",
-                    "data": {"total_steps": step},
-                    "error": "ToolExecutionError",
-                }
+        return {
+            "success": True,
+            "message": final_text or "Operación completada.",
+            "data": {"total_steps": total_steps},
+            "error": None,
+        }
 
-            current_message = tool_response_parts
-
-    return {
-        "success": False,
-        "message": "Se alcanzó el límite de pasos del agente.",
-        "error": "MaxStepsReached",
-    }
+    except Exception as e:
+        traceback.print_exc()
+        print(f"❌ Error en la ejecución de ADK: {e}")
+        return {
+            "success": False,
+            "message": "Hubo un problema procesando tu solicitud con ADK.",
+            "error": str(e),
+        }

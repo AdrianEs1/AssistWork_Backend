@@ -1,19 +1,13 @@
 import base64
 import re
 import html
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any, List, Optional
-from mcp.server.fastmcp import FastMCP
 
-# Importa tu base (ajusta la ruta según tu proyecto)
 from apps.services.oauth.google_service_base.google_service_base import GoogleServiceBase
-
-# 1. Mantenemos tu clase de servicio intacta
-
-import json
-
-# Importa tu infraestructura base
+from apps.services.tool_registry import tool
 
 # --- CLASE DE SERVICIO ORIGINAL ---
 class GmailService(GoogleServiceBase):
@@ -29,10 +23,7 @@ class GmailService(GoogleServiceBase):
 
 gmail_instance = GmailService()
 
-# --- INICIALIZACIÓN FAST_MCP ---
-mcp = FastMCP("AssistWork-Gmail")
-
-# --- FUNCIONES AUXILIARES (Tu lógica de procesamiento) ---
+# --- FUNCIONES AUXILIARES ---
 
 def html_to_text(html_content: str) -> str:
     if not html_content: return ""
@@ -62,9 +53,9 @@ def extract_message_body(payload) -> str:
     extract_parts(payload)
     return '\n\n'.join(body_parts).strip()
 
-# --- HERRAMIENTAS MCP (MIGRACIÓN) ---
+# --- HERRAMIENTAS MIGRADAS ---
 
-@mcp.tool()
+@tool(group="gmail")
 async def send_email(user_id: str, to: str, subject: str, body: str, content_type: str = "auto") -> str:
     """Envía un email usando Gmail API. content_type: 'html' o 'text/html' para HTML, 'plain' para texto plano, 'auto' para detección automática."""
     try:
@@ -94,12 +85,12 @@ async def send_email(user_id: str, to: str, subject: str, body: str, content_typ
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
-@mcp.tool()
+@tool(group="gmail")
 async def list_emails(user_id: str, label: str = "INBOX", max_results: int = 5, query: str = None) -> str:
     """
     Lista emails. Retorna lista de IDs y metadata.
     IMPORTANTE: Para leer el contenido usa read_email(message_id=<id>) 
-    donde <id> es SOLO el valor del campo 'id' de cada email (ej: '19ce00779ad89ecc').
+    donde <id> es SOLO el valor del campo 'id' de cada email.
     """
     try:
         service = gmail_instance.get_service(user_id)
@@ -118,7 +109,7 @@ async def list_emails(user_id: str, label: str = "INBOX", max_results: int = 5, 
             ).execute()
             headers = m.get('payload', {}).get('headers', [])
             detailed.append({
-                "message_id": msg['id'],  # ← Renombrado de 'id' a 'message_id'
+                "message_id": msg['id'],
                 "subject": next((h['value'] for h in headers if h['name'] == 'Subject'), 'N/A'),
                 "from": next((h['value'] for h in headers if h['name'] == 'From'), 'N/A'),
                 "date": next((h['value'] for h in headers if h['name'] == 'Date'), 'N/A'),
@@ -134,7 +125,7 @@ async def list_emails(user_id: str, label: str = "INBOX", max_results: int = 5, 
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
-@mcp.tool()
+@tool(group="gmail")
 async def read_email(user_id: str, message_id: str, preview_length: int = 500, show_full: bool = False) -> str:
     """Lee el contenido completo de un email por su ID."""
     try:
@@ -152,16 +143,13 @@ async def read_email(user_id: str, message_id: str, preview_length: int = 500, s
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
-@mcp.tool()
+@tool(group="gmail")
 async def search_emails(user_id: str, query: str, max_results: int = 5) -> str:
     """Busca emails usando la sintaxis de búsqueda de Gmail (ej: 'from:google after:2024/01/01')."""
     return await list_emails(user_id=user_id, max_results=max_results, query=query)
 
-@mcp.tool()
-async def test_connection(user_id: str) -> str:
+@tool(group="gmail")
+async def test_gmail_connection(user_id: str) -> str:
     """Verifica la conexión con la API de Gmail."""
     result = gmail_instance.test_connection(user_id)
     return json.dumps(result)
-
-if __name__ == "__main__":
-    mcp.run()
