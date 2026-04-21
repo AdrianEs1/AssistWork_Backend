@@ -73,13 +73,19 @@ class ToolRegistry:
             if param.annotation == int: p_type = "integer"
             elif param.annotation == float: p_type = "number"
             elif param.annotation == bool: p_type = "boolean"
-            elif param.annotation == List or (hasattr(param.annotation, '__origin__') and param.annotation.__origin__ == list):
+            elif param.annotation in (list, List) or (hasattr(param.annotation, '__origin__') and param.annotation.__origin__ == list):
                 p_type = "array"
-            
-            properties[name] = {
+
+            prop = {
                 "type": p_type,
                 "description": param_descriptions.get(name, f"Parámetro {name}")
             }
+
+            # Gemini requiere 'items' cuando el tipo es array
+            if p_type == "array":
+                prop["items"] = {"type": "string"}
+
+            properties[name] = prop
             
             if param.default == inspect.Parameter.empty:
                 required.append(name)

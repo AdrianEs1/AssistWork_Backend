@@ -53,7 +53,7 @@ def extract_message_body(payload) -> str:
     extract_parts(payload)
     return '\n\n'.join(body_parts).strip()
 
-# --- HERRAMIENTAS MIGRADAS ---
+# --- HERRAMIENTAS  ---
 
 @tool(group="gmail")
 async def send_email(user_id: str, to: str, subject: str, body: str, content_type: str = "auto") -> str:

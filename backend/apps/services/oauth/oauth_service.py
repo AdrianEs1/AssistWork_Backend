@@ -190,9 +190,10 @@ class OAuthService:
 
         if remaining_active <= 1: # Es la última del proveedor
             try:
-                token_record = db.query(OAuthConnection).filter_by(
-                    user_id=user_id
-                ).filter(
+                # ✅ Filtra por proveedor
+                token_record = db.query(OAuthConnection).filter(
+                    OAuthConnection.user_id == user_id,
+                    OAuthConnection.integration.like(f"{provider_name}:%"),
                     OAuthConnection.access_token.isnot(None)
                 ).first()
 
@@ -212,8 +213,10 @@ class OAuthService:
                     revoked = True
                     print(f"ℹ️ No se encontró token para revocar (user {user_id})")
 
-                db.query(OAuthConnection).filter_by(
-                    user_id=user_id
+                # ✅ Solo borra las del proveedor desconectado
+                db.query(OAuthConnection).filter(
+                    OAuthConnection.user_id == user_id,
+                    OAuthConnection.integration.like(f"{provider_name}:%")
                 ).delete()
                 cleaned = True
                 db.commit()

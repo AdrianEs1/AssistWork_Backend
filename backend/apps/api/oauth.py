@@ -108,12 +108,17 @@ async def oauth_callback(
             <h2>✅ Autenticación exitosa en {integration.capitalize()}</h2>
             <p>Cerrando ventana...</p>
             <script>
-                if (window.opener) {{
-                    window.opener.postMessage({{
-                        status: 'success',
-                        app: '{integration}',
-                        email: '{email}'
-                    }}, '{FRONTEND_URL}');
+                try {{
+                    if (window.opener) {{
+                        window.opener.postMessage({{
+                            status: 'success',
+                            app: '{integration}',
+                            email: '{email}'
+                        }}, '{FRONTEND_URL}');
+                    }}
+                }} catch(e) {{
+                    console.log('No se pudo enviar mensaje al opener:', e);
+                }} finally {{
                     setTimeout(() => window.close(), 500);
                 }}
             </script>
@@ -214,9 +219,9 @@ async def get_drive_access_token(
     current_user: User = Depends(get_current_user),
 ):
     try:
-        drive = DriveService()
-        service = drive.get_service(str(current_user.id))
-        creds = service._http.credentials
+        #drive = DriveService()
+        #service = drive.get_service(str(current_user.id))
+        """creds = service._http.credentials
 
         if not creds or not creds.token:
             raise HTTPException(
@@ -226,7 +231,7 @@ async def get_drive_access_token(
 
         return {
             "access_token": creds.token
-        }
+        }"""
 
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
