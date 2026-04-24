@@ -1,8 +1,3 @@
-#from google_auth_oauthlib.flow import Flow
-#from google.oauth2.credentials import Credentials
-#from google.auth.transport.requests import Request
-#from google.auth.exceptions import RefreshError
-#from googleapiclient.discovery import build
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from apps.models.oauth_connection import OAuthConnection
@@ -21,57 +16,6 @@ class OAuthService:
     Servicio centralizado para manejar OAuth de Google con scopes incrementales.
     """
 
-    #SUPPORTED_SERVICES = SUPPORTED_SERVICES
-
-    # -------------------- Helpers --------------------
-
-    """def get_accumulated_scopes(self, user_id: str, db: Session, new_service: str) -> list:
-        ""
-        Obtiene scopes acumulados de TODOS los servicios (activos e inactivos).
-        ""
-        all_connections = db.query(OAuthConnection).filter_by(
-            user_id=user_id
-        ).all()
-
-        accumulated_scopes = []
-        for conn in all_connections:
-            if conn.service in SUPPORTED_SERVICES:
-                accumulated_scopes.extend(SUPPORTED_SERVICES[conn.service]["scopes"])
-
-        # Agregar scopes del nuevo servicio
-        if new_service in SUPPORTED_SERVICES:
-            accumulated_scopes.extend(SUPPORTED_SERVICES[new_service]["scopes"])
-        else:
-            raise ValueError(f"Servicio '{new_service}' no soportado al acumular scopes")
-
-        # Eliminar duplicados manteniendo orden
-        return list(dict.fromkeys(accumulated_scopes))"""
-
-    """def create_google_flow_with_scopes(self, service: str, scopes: list, redirect_uri: str = None) -> Flow:
-        ""Crea el flujo OAuth con scopes personalizados (acumulados). Usará siempre el redirect único por defecto.""
-        if service not in SUPPORTED_SERVICES:
-            raise ValueError(f"Servicio '{service}' no soportado")
-
-        # Usar siempre el redirect URI fijo (el que registraste en Google Console)
-        effective_redirect = redirect_uri or f"{GOOGLE_REDIRECT_URI}/api/oauth/callback"
-
-        client_config = {
-            "web": {
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                # Incluir el redirect URI fijo (lista) para que la librería tenga el mismo valor
-                "redirect_uris": [effective_redirect],
-            }
-        }
-
-        flow = Flow.from_client_config(
-            client_config,
-            scopes=scopes,
-            redirect_uri=effective_redirect,
-        )
-        return flow"""
 
     # -------------------- Autorización --------------------
 

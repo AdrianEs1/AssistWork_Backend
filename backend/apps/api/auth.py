@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Cookie
+from fastapi import APIRouter, Request, Depends, HTTPException, status, Response, Cookie
 from sqlalchemy.orm import Session
 from apps.core.dependencies import get_db, get_current_user, create_secure_token
 from apps.core.security import (
@@ -6,7 +6,7 @@ from apps.core.security import (
     get_password_hash, 
     create_access_token, 
     create_refresh_token,
-    decode_token,COOKIE_SECURE, 
+    decode_token, hash_code, COOKIE_SECURE, 
 )
 from apps.core.email_verification_service import create_email_verification, verify_email_code
 from apps.schemas.auth import UserRegister, UserLogin, Token, TokenRefresh, UserResponse, ForgotPasswordRequest, ResetPasswordRequest, DeleteAccountRequest, VerifyEmailRequest, ResendVerificationRequest, MessageResponse
@@ -19,12 +19,17 @@ MIN_WAIT = timedelta(minutes=2)
 MAX_ATTEMPTS = 5
 RESET_WINDOW = timedelta(hours=1)
 
+from apps.core.limiter import limiter
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
 @router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserRegister, db: Session = Depends(get_db)):
+@limiter.limit("3/minute")
+async def register(
+    request:Request, 
+    user_data: UserRegister, 
+    db: Session = Depends(get_db)):
     """
     Registrar nuevo usuario
     """
@@ -64,7 +69,12 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
 
 
 @router.post("/login")
-async def login(credentials: UserLogin, response: Response, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+async def login(
+    request:Request, 
+    credentials: UserLogin, 
+    response: Response, db: 
+    Session = Depends(get_db)):
     """Login de usuario"""
     user = db.query(User).filter(User.email == credentials.email).first()
     
@@ -79,13 +89,23 @@ async def login(credentials: UserLogin, response: Response, db: Session = Depend
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuario inactivo"
         )
+
+    #FIX integrado solucionando problema de seguridad
+    if not user.is_verified:
+        raise HTTPException(
+           status_code=status.HTTP_403_FORBIDDEN,
+           detail="Cuenta no verificada" 
+        )
     
     user.last_login = datetime.utcnow()
-    db.commit()
+    
     
     # Crear tokens
     access_token = create_access_token(data={"sub": str(user.id)})
     refresh_token = create_refresh_token(data={"sub": str(user.id)})
+
+    user.refresh_token_hash = hash_code(refresh_token)
+    db.commit()
     
     # ✅ Guardar refresh_token en HttpOnly cookie
     response.set_cookie(
@@ -106,17 +126,15 @@ async def login(credentials: UserLogin, response: Response, db: Session = Depend
 
 
 @router.post("/refresh")
+@limiter.limit("10/minute")
 async def refresh_token(
+    request:Request,
     response: Response,
     refresh_token: str = Cookie(None),  # Leer desde cookie
     db: Session = Depends(get_db)
 ):
     """Refrescar access token"""
-    if not refresh_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token no encontrado"
-        )
+    
     
     payload = decode_token(refresh_token)
     
@@ -135,6 +153,12 @@ async def refresh_token(
             detail="Usuario no encontrado o inactivo"
         )
     
+    if not user.refresh_token_hash or user.refresh_token_hash != hash_code(refresh_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token inválido"
+        )
+
     # Crear nuevos tokens
     new_access_token = create_access_token(data={"sub": str(user.id)})
     new_refresh_token = create_refresh_token(data={"sub": str(user.id)})
@@ -149,6 +173,9 @@ async def refresh_token(
         # partitioned=True,  Activar en futuras versiones
         max_age=7 * 24 * 60 * 60
     )
+
+    user.refresh_token_hash=hash_code(new_refresh_token)
+    db.commit()
     
     return {
         "access_token": new_access_token,
@@ -157,7 +184,9 @@ async def refresh_token(
 
 
 @router.post("/verify-email")
+@limiter.limit("3/minute")
 async def verify_email(
+    request:Request,
     payload: VerifyEmailRequest,
     db: Session = Depends(get_db)
 ):
@@ -170,7 +199,9 @@ async def verify_email(
 
 
 @router.post("/resend-verification-code")
+@limiter.limit("2/minute")
 async def resend_code(
+    request:Request,
     payload: ResendVerificationRequest,
     db: Session = Depends(get_db)
 ):
@@ -225,10 +256,18 @@ async def resend_code(
 
 
 @router.post("/logout")
-async def logout(response: Response, current_user: User = Depends(get_current_user)):
+@limiter.limit("2/minute")
+async def logout(
+    request:Request,
+    response: Response, 
+    current_user: User = Depends(get_current_user),
+    db: Session= Depends(get_db)):
     """Logout - eliminar refresh token"""
+    current_user.refresh_token_hash = None
+    db.commit()
     response.delete_cookie(key="refresh_token")
     return {"message": "Logout exitoso"}
+
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
@@ -237,8 +276,13 @@ async def get_me(current_user: User = Depends(get_current_user)):
     """
     return current_user
 
+
 @router.post("/forgot-password")
-async def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("3/minute")
+async def forgot_password(
+    request:Request,
+    payload: ForgotPasswordRequest, 
+    db: Session = Depends(get_db)):
 
     email= payload.email
     user = db.query(User).filter(User.email == email).first()
@@ -249,7 +293,7 @@ async def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(
 
     token = create_secure_token(str(user.id))
 
-    user.reset_password_token = token
+    user.reset_password_token = hash_code(token)  
     user.reset_password_expires = datetime.utcnow() + timedelta(minutes=30)
     db.commit()
 
@@ -264,12 +308,14 @@ async def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(
 from apps.schemas.auth import ResetPasswordRequest
 
 @router.post("/reset-password")
+@limiter.limit("3/minute")
 async def reset_password(
+    request:Request,
     payload: ResetPasswordRequest,
     db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(
-        User.reset_password_token == payload.token,
+        User.reset_password_token == hash_code(payload.token),
         User.reset_password_expires > datetime.utcnow()
     ).first()
 
@@ -290,13 +336,15 @@ async def reset_password(
 
 
 @router.post("/request-account-deletion")
+@limiter.limit("3/minute")
 async def request_account_deletion(
+    request:Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     token = create_secure_token(str(current_user.id))
 
-    current_user.delete_account_token = token
+    current_user.delete_account_token = hash_code(token)  
     current_user.delete_account_expires = datetime.utcnow() + timedelta(minutes=30)
 
     db.commit()
@@ -314,13 +362,15 @@ async def request_account_deletion(
 
 
 @router.post("/confirm-account-deletion")
+@limiter.limit("3/minute")
 async def confirm_account_deletion(
+    request:Request,
     payload: DeleteAccountRequest,
     response: Response,
     db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(
-        User.delete_account_token == payload.token,
+        User.delete_account_token == hash_code(payload.token),
         User.delete_account_expires > datetime.utcnow()
     ).first()
 

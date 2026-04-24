@@ -1,4 +1,3 @@
-from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import lifespan, logger
@@ -6,7 +5,13 @@ from apps.api import auth, conversations, agentcontext, oauth, payments, mercado
 from config import FRONTEND_URL
 import os
 
+from fastapi import FastAPI, Request
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
 
+# Crear limiter
+from apps.core.limiter import limiter
 
 app = FastAPI(
     title="Agente IA API",
@@ -14,6 +19,20 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan
 )
+
+# Registrar limiter en app
+app.state.limiter = limiter
+
+# Middleware
+app.add_middleware(SlowAPIMiddleware)
+
+# 🔥 MUY IMPORTANTE: handler de error
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Demasiadas solicitudes. Intenta más tarde."},
+    )
 
 
 origins = [

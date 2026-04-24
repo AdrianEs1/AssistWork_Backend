@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status,Form, File
+from fastapi import APIRouter, Request, Depends, HTTPException, UploadFile, status,Form, File
 from sqlalchemy.orm import Session
 from typing import List
 from apps.core.dependencies import get_db, get_current_user
@@ -16,11 +16,15 @@ from apps.middleware.subscription_middleware import (
     SubscriptionLimitError
 )
 
+from apps.core.limiter import limiter
+
 router = APIRouter(prefix="/agent/context", tags=["Agent Context"])
 
 
 @router.post("/files")
+@limiter.limit("4/minute")
 async def set_conversation_files(
+    request: Request,
     files: List[UploadFile] = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -107,7 +111,9 @@ async def set_conversation_files(
     }
 
 @router.get("/uploaded-files", response_model=FilesDetail)
+@limiter.limit("3/minute")
 async def get_files_uploaded(
+    request:Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 
@@ -124,7 +130,9 @@ async def get_files_uploaded(
     }
 
 @router.delete("/delete-file/{file_id}")
+@limiter.limit("3/minute")
 async def delete_files(
+    request:Request,
     file_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)

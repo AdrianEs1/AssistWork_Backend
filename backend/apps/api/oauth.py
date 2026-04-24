@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Request, Depends, HTTPException, status, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from typing import List
@@ -15,12 +15,15 @@ from apps.models.oauth_connection import OAuthConnection
 from apps.services.oauth.utils import get_integration_config
 from config import FRONTEND_URL
 
+from apps.core.limiter import limiter
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
 
 
 @router.get("/{integration}/connect", response_model=OAuthConnectResponse)
+@limiter.limit("10/minute")
 async def connect_service(
+    request:Request,
     integration: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)  # Ya lo tienes
@@ -132,7 +135,9 @@ async def oauth_callback(
 
 
 @router.get("/connections", response_model=List[OAuthConnectionResponse])
+@limiter.limit("10/minute")
 async def get_connections(
+    request:Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -148,7 +153,9 @@ async def get_connections(
 
 
 @router.get("/{integration}/status")
+@limiter.limit("10/minute")
 async def service_status(
+    request:Request,
     integration: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -175,7 +182,9 @@ async def service_status(
 
 
 @router.delete("/{integration}/disconnect")
+@limiter.limit("10/minute")
 async def disconnect_service(
+    request:Request,
     integration: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -214,14 +223,14 @@ async def disconnect_service(
     }
 
 #Endpoint para enviar token y permitir el uso de Google Picker y así poder acceder a Drive
-@router.get("/drive/access-token")
+"""@router.get("/drive/access-token")
 async def get_drive_access_token(
     current_user: User = Depends(get_current_user),
 ):
     try:
         #drive = DriveService()
         #service = drive.get_service(str(current_user.id))
-        """creds = service._http.credentials
+        creds = service._http.credentials
 
         if not creds or not creds.token:
             raise HTTPException(
@@ -231,7 +240,7 @@ async def get_drive_access_token(
 
         return {
             "access_token": creds.token
-        }"""
+        }
 
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
@@ -242,5 +251,5 @@ async def get_drive_access_token(
         raise HTTPException(
             status_code=500,
             detail="Error obteniendo access token de Drive"
-        )
+        )"""
 

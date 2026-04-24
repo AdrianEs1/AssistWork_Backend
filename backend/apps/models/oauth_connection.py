@@ -37,16 +37,16 @@ class OAuthConnection(Base):
             return encryption.encrypt(value)
         return value
     
-    """def _is_encrypted(self, value: str) -> bool:
-        Verifica si un token ya está encriptado (Fernet empieza con 'gAAAAA')
-        return value.startswith('gAAAAA')"""
-    
     def _is_encrypted(self, value: str) -> bool:
+        #Verifica si un token ya está encriptado (Fernet empieza con 'gAAAAA')
+        return value.startswith('gAAAAA')
+    
+    """def _is_encrypted(self, value: str) -> bool:
         try:
             encryption.decrypt(value)
             return True
         except Exception:
-            return False
+            return False"""
 
 
     

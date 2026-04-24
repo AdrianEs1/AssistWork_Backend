@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query 
+from fastapi import APIRouter, Request, Depends, HTTPException, status, Query 
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, or_
 from apps.core.dependencies import get_db, get_current_user
@@ -11,12 +11,16 @@ from datetime import datetime
 import uuid
 from apps.schemas.conversation import ConversationListItem, ConversationDetail
 
+from apps.core.limiter import limiter
+
 router = APIRouter(prefix="/conversations", tags=["Conversations"])
 
 
 # Endpoints
 @router.get("", response_model=List[ConversationListItem])
+@limiter.limit("15/minute")
 async def list_conversations(
+    request:Request,
     status: Literal["active", "archived", "all"] = Query("active"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -49,7 +53,9 @@ async def list_conversations(
 
 
 @router.get("/{conversation_id}", response_model=ConversationDetail)
+@limiter.limit("10/minute")
 async def get_conversation(
+    request:Request,
     conversation_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -85,7 +91,9 @@ async def get_conversation(
 
 
 @router.post("", response_model=ConversationListItem)
+@limiter.limit("10/minute")
 async def create_conversation(
+    request:Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -105,7 +113,9 @@ async def create_conversation(
 
 
 @router.post("/{conversation_id}/archive")
+@limiter.limit("5/minute")
 async def archive_conversation(
+    request:Request,
     conversation_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -138,7 +148,9 @@ async def archive_conversation(
 
 
 @router.delete("/{conversation_id}/delete-permanent")
+@limiter.limit("10/minute")
 async def delete_conversation_permanently(
+    request:Request,
     conversation_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -169,7 +181,9 @@ async def delete_conversation_permanently(
 
 
 @router.get("/search", response_model=List[ConversationListItem])
+@limiter.limit("5/minute")
 async def search_conversations(
+    request:Request,
     q: str = Query(..., min_length=1),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -187,7 +201,9 @@ async def search_conversations(
 
 
 @router.get("/archived")
+@limiter.limit("5/minute")
 def get_archived_conversations(
+    request:Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):  
@@ -200,7 +216,9 @@ def get_archived_conversations(
 
 
 @router.patch("/{conversation_id}/restore")
+@limiter.limit("5/minute")
 def restore_conversation(
+    request:Request,
     conversation_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
