@@ -1,3 +1,4 @@
+# config.py
 import os
 from dotenv import load_dotenv
 import logging
@@ -6,14 +7,28 @@ from fastapi import FastAPI
 
 load_dotenv()
 
-# Logger global
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("agente-ia")
 
-# Ciclo de vida de la app (lifespan)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 Servidor iniciado")
+    logger.info("🚀 Iniciando servidor...")
+
+    # ✅ Pre-carga el modelo al arrancar — no al primer request del usuario
+    try:
+        from apps.services.memory.qdrant_service import get_embedder, ensure_collection_initialized
+
+        logger.info("Cargando modelo SentenceTransformer...")
+        get_embedder()
+        logger.info("✅ Modelo listo")
+
+        logger.info("Inicializando colección Qdrant...")
+        ensure_collection_initialized()
+        logger.info("✅ Qdrant listo")
+    except Exception as e:
+        logger.warning(f"⚠️ Error en startup: {e} — la app continúa sin vector store")
+
+    logger.info("✅ Servidor listo para recibir requests")
     yield
     logger.info("🛑 Servidor detenido")
 

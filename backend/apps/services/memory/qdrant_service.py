@@ -16,7 +16,14 @@ client = QdrantClient(
     prefer_grpc=False
 )
 
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+# ✅ Reemplazar con esto
+_embedder = None
+
+def get_embedder():
+    global _embedder
+    if _embedder is None:
+        _embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    return _embedder
 
 
 # --- Validar que la colección tiene la config correcta ---
@@ -97,7 +104,7 @@ def init_collection(max_retries=3):
 def store_message(text, metadata=None, max_retries=3):
     for attempt in range(max_retries):
         try:
-            vector = embedder.encode(text).tolist()
+            vector = _embedder.encode(text).tolist()
             point_id = str(uuid.uuid4())
 
             client.upsert(
@@ -128,7 +135,7 @@ def search_context(query, user_id=None, conversation_id=None, limit=10, score_th
 
     for attempt in range(max_retries):
         try:
-            query_vector = embedder.encode(query).tolist()
+            query_vector = _embedder.encode(query).tolist()
 
             conditions = []
             if user_id:
@@ -179,7 +186,9 @@ def ensure_collection_initialized():
         _collection_initialized = init_collection()
     return _collection_initialized
 
-try:
+
+#BORRAR PARA EVITAR CARGAS INNECESARIAS 
+"""try:
     ensure_collection_initialized()
 except Exception as e:
-    print(f"⚠️ Error en inicialización automática de Qdrant: {e}")
+    print(f"⚠️ Error en inicialización automática de Qdrant: {e}")"""
