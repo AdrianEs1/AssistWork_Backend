@@ -90,7 +90,7 @@ async def orchestrator(
     # ── 4. Configurar Agente y Runner ADK ─────────────────────────────────────
     agent = Agent(
         name="AssistWork_Agent",
-        model="gemini-2.5-flash-lite", # Mantenemos el modelo solicitado
+        model="gemini-3.1-flash-lite-preview", # Mantenemos el modelo solicitado
         instruction=system_instruction,
         tools=adk_tools,
     )
