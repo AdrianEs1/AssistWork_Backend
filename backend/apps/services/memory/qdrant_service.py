@@ -104,7 +104,7 @@ def init_collection(max_retries=3):
 def store_message(text, metadata=None, max_retries=3):
     for attempt in range(max_retries):
         try:
-            vector = _embedder.encode(text).tolist()
+            vector = get_embedder().encode(text).tolist()
             point_id = str(uuid.uuid4())
 
             client.upsert(
@@ -135,7 +135,7 @@ def search_context(query, user_id=None, conversation_id=None, limit=10, score_th
 
     for attempt in range(max_retries):
         try:
-            query_vector = _embedder.encode(query).tolist()
+            query_vector = get_embedder().encode(query).tolist()
 
             conditions = []
             if user_id:
