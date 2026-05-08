@@ -1,13 +1,15 @@
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import ResponseHandlingException
 from qdrant_client.models import VectorParams, Distance, PointStruct, PayloadSchemaType
-from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
 import uuid
 import time
-from config import QDRANT_API_KEY, QDRANT_URL, QDRANT_COLLECTION_NAME
+from config import QDRANT_API_KEY, QDRANT_URL, QDRANT_COLLECTION_NAME, GOOGLE_API_KEY
 
 COLLECTION_NAME = QDRANT_COLLECTION_NAME
-VECTOR_SIZE = 384
+VECTOR_SIZE = 3072  
+
+genai.configure(api_key=GOOGLE_API_KEY)
 
 client = QdrantClient(
     url=QDRANT_URL,
@@ -16,29 +18,25 @@ client = QdrantClient(
     prefer_grpc=False
 )
 
-# ✅ Reemplazar con esto
-_embedder = None
 
-def get_embedder():
-    global _embedder
-    if _embedder is None:
-        _embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-    return _embedder
+def get_embedding(text: str) -> list:
+    result = genai.embed_content(
+        model="models/gemini-embedding-2",
+        content=text,
+    )
+    return result["embedding"]
 
 
 # --- Validar que la colección tiene la config correcta ---
 def _is_collection_config_valid() -> bool:
-    """Verifica que la colección existe y tiene vectores regulares de tamaño correcto."""
     try:
         info = client.get_collection(COLLECTION_NAME)
         vectors_config = info.config.params.vectors
 
-        # Si es dict → es multi-vector (configuración incorrecta)
         if isinstance(vectors_config, dict):
             print(f"⚠️ Colección '{COLLECTION_NAME}' tiene configuración multi-vector. Debe recrearse.")
             return False
 
-        # Si el tamaño no coincide → configuración incorrecta
         if vectors_config.size != VECTOR_SIZE:
             print(f"⚠️ Colección '{COLLECTION_NAME}' tiene size={vectors_config.size}, esperado={VECTOR_SIZE}. Debe recrearse.")
             return False
@@ -61,7 +59,6 @@ def init_collection(max_retries=3):
                 if _is_collection_config_valid():
                     print(f"ℹ️ Colección '{COLLECTION_NAME}' ya existe y su configuración es correcta")
                 else:
-                    # Config inválida → recrear
                     print(f"🗑️ Recreando colección '{COLLECTION_NAME}' por configuración incompatible...")
                     client.delete_collection(COLLECTION_NAME)
                     collection_exists = False
@@ -73,7 +70,6 @@ def init_collection(max_retries=3):
                 )
                 print(f"✅ Colección '{COLLECTION_NAME}' creada en Qdrant")
 
-            # Crear índices para filtrado
             for field, schema in [
                 ("user_id", PayloadSchemaType.KEYWORD),
                 ("conversation_id", PayloadSchemaType.KEYWORD),
@@ -104,7 +100,7 @@ def init_collection(max_retries=3):
 def store_message(text, metadata=None, max_retries=3):
     for attempt in range(max_retries):
         try:
-            vector = get_embedder().encode(text).tolist()
+            vector = get_embedding(text)
             point_id = str(uuid.uuid4())
 
             client.upsert(
@@ -135,7 +131,7 @@ def search_context(query, user_id=None, conversation_id=None, limit=10, score_th
 
     for attempt in range(max_retries):
         try:
-            query_vector = get_embedder().encode(query).tolist()
+            query_vector = get_embedding(query)
 
             conditions = []
             if user_id:
@@ -185,10 +181,3 @@ def ensure_collection_initialized():
     if not _collection_initialized:
         _collection_initialized = init_collection()
     return _collection_initialized
-
-
-#BORRAR PARA EVITAR CARGAS INNECESARIAS 
-"""try:
-    ensure_collection_initialized()
-except Exception as e:
-    print(f"⚠️ Error en inicialización automática de Qdrant: {e}")"""
