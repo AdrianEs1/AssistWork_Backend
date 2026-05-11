@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("agente-ia")
+logger = logging.getLogger(" AssistWork_Agent")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

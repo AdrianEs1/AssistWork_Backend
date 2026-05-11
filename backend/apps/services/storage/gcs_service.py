@@ -15,12 +15,6 @@ import uuid
 import re
 from config import GCS_BUCKET_NAME, GCS_CREDENTIALS_BASE64, logger
 
-# Configuración
-BUCKET_NAME = GCS_BUCKET_NAME
-CREDENTIALS_PATH = os.getenv("GCS_CREDENTIALS_BASE64")
-CREDENTIALS_BASE64 = GCS_CREDENTIALS_BASE64
-
-
 
 def sanitize_filename(name: str) -> str:
     """
@@ -38,40 +32,25 @@ def validate_pdf(file_content: bytes) -> bool:
 
 # Inicializar cliente GCS
 def get_storage_client():
-    """
-    Inicializa cliente de GCS con credenciales desde:
-    1. Variable de entorno GCS_CREDENTIALS_BASE64 (producción)
-    2. Archivo JSON en GOOGLE_APPLICATION_CREDENTIALS (desarrollo)
-    3. Application Default Credentials (si corre en GCP)
-    """
-    if CREDENTIALS_BASE64:
-        # Decodificar base64 y crear credenciales
-        try:
-            credentials_json = base64.b64decode(CREDENTIALS_BASE64).decode('utf-8')
+    if os.getenv("K_SERVICE"):
+        # Producción (Cloud Run) — ADC, no necesita base64
+        client = storage.Client()
+        logger.info("✅ GCS inicializado con Application Default Credentials (Cloud Run)")
+        return client
+    else:
+        # Local — usa base64 como siempre
+        if GCS_CREDENTIALS_BASE64:
+            credentials_json = base64.b64decode(GCS_CREDENTIALS_BASE64).decode('utf-8')
             credentials_dict = json.loads(credentials_json)
             credentials = service_account.Credentials.from_service_account_info(credentials_dict)
             client = storage.Client(credentials=credentials, project=credentials_dict['project_id'])
             logger.info("✅ GCS inicializado con credenciales base64")
             return client
-        except Exception as e:
-            logger.info(f"❌ Error decodificando credenciales base64: {e}")
-            raise
-    
-    elif CREDENTIALS_PATH and os.path.exists(CREDENTIALS_PATH):
-        # Usar archivo JSON
-        client = storage.Client.from_service_account_json(CREDENTIALS_PATH)
-        logger.info(f"✅ GCS inicializado con archivo JSON: {CREDENTIALS_PATH}")
-        return client
-    
-    else:
-        # Usar Application Default Credentials (si corres en GCP)
-        client = storage.Client()
-        logger.info("✅ GCS inicializado con Application Default Credentials")
-        return client
+        raise Exception("❌ No hay credenciales disponibles para GCS")
 
-# Cliente y bucket
+# Se mantiene igual — inicialización eager
 storage_client = get_storage_client()
-bucket = storage_client.bucket(BUCKET_NAME)
+bucket = storage_client.bucket(GCS_BUCKET_NAME)
 
 
 def upload_file(file_content: bytes, user_id: str, original_filename: str, file_hash: str = None) -> dict:

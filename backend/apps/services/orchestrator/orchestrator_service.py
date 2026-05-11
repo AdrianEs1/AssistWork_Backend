@@ -1,10 +1,10 @@
 import traceback
 from typing import Callable, Awaitable, Optional
 
-import google.adk as adk  # noqa: F401
+#import google.adk as adk  # noqa: F401
 from google.adk.agents import Agent
 from google.adk.runners import Runner
-from google.adk.events import Event
+#from google.adk.events import Event
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
@@ -16,100 +16,69 @@ from apps.services.orchestrator.intent_classifier import classify_intent
 from config import GOOGLE_API_KEY, MODEL_GOOGLE_IA
 from .time_spent_global import measure_time
 from .time_spent_specific import timer
+import uuid
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
 EventCallback = Optional[Callable[[str, dict], Awaitable[None]]]
 
-# ── Servicios y caché globales ────────────────────────────────────────────────
-# InMemorySessionService mantiene el historial de ADK entre mensajes.
-# En producción real, reemplazar por un SessionService persistente (Redis, DB).
-_global_session_service = InMemorySessionService()
-
-# Caché de contexto por user_id.
-# Estructura: { user_id: { "runner": Runner, "session_id": str, "tools": list,
-#                          "disconnected_apps": list, "prompt_base": str } }
-_session_cache: dict[str, dict] = {}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _detect_disconnected_apps(registered_groups: set[str]) -> list[str]:
-    """Detecta apps configuradas pero no registradas en el registry."""
-    app_names = {
+def _get_disconnected_apps_from_db(user_id: str) -> list[str]:
+    from apps.services.oauth.oauth_service import oauth_service
+    from apps.database import SessionLocal
+
+    app_integrations = {
         "gmail":      "Gmail",
         "sheets":     "Sheets",
         "teams":      "Microsoft Teams",
         "localfiles": "Local Files",
     }
-    return [name for gid, name in app_names.items() if gid not in registered_groups]
+
+    try:
+        db = SessionLocal()
+        disconnected = []
+        for integration, app_name in app_integrations.items():
+            conn = oauth_service.get_user_connection(user_id, integration, db)
+            if not conn:
+                disconnected.append(app_name)
+        return disconnected
+    except Exception as e:
+        print(f"⚠️ Error consultando apps conectadas: {e}")
+        return []
+    finally:
+        db.close()
 
 
-async def _build_session(user_id: str) -> tuple[Runner, str, list, list[str]]:
-    """
-    Crea Agent, Runner y sesión ADK para un user_id nuevo.
-    Solo se llama UNA VEZ por usuario (primer mensaje).
-    Devuelve (runner, session_id, adk_tools, disconnected_apps).
-    """
-    # Cargar herramientas
+async def _build_runner(user_id: str, disconnected_apps: list[str]) -> Runner:
     adk_tools = TOOL_REGISTRY.get_adk_tools(user_id=user_id)
-    registered_groups = {t["group"] for t in TOOL_REGISTRY.tools.values()}
-    disconnected_apps = _detect_disconnected_apps(registered_groups)
-
-    # System prompt base (sin is_first_message ni intent; se usará la versión
-    # mínima aquí; el prompt real se pasa al Agent en cada turno si varía).
-    # Para simplificar, construimos el prompt base con intent="agentTask" y
-    # lo reconstruimos solo cuando cambien disconnected_apps.
     prompt_base = build_system_prompt(
         intent="agentTask",
         disconnected_apps=disconnected_apps,
-        is_first_message=True,
+        is_first_message=False,
         has_tool_error=False,
     )
-
     agent = Agent(
         name="AssistWork_Agent",
         model=MODEL_GOOGLE_IA,
         instruction=prompt_base,
         tools=adk_tools,
     )
-
-    # Crear sesión ADK con ID fijo igual a user_id para poder recuperarla.
-    try:
-        session = await _global_session_service.create_session(
-            user_id=user_id,
-            app_name="AssistWork_Agent",
-            session_id=user_id,
-        )
-    except Exception as e:
-        print(f"⚠️ create_session falló, intentando get_session: {e}")
-        session = await _global_session_service.get_session(
-            user_id=user_id,
-            app_name="AssistWork_Agent",
-            session_id=user_id,
-        )
-
-    session_id = session.id if session else user_id
-
+    session_service = InMemorySessionService()
+    session_id = str(uuid.uuid4())
+    await session_service.create_session(
+        user_id=user_id,
+        app_name="AssistWork_Agent",
+        session_id=session_id,
+    )
     runner = Runner(
         agent=agent,
         app_name="AssistWork_Agent",
-        session_service=_global_session_service,
+        session_service=session_service,
     )
-
-    print(f"✅ Sesión ADK creada para user_id={user_id} | session_id={session_id}")
-    return runner, session_id, adk_tools, disconnected_apps
-
-
-def invalidate_session(user_id: str) -> None:
-    """
-    Invalida la caché de un usuario.
-    Llamar cuando el usuario conecta o desconecta una integración,
-    o cuando se quiera forzar un nuevo Agent con tools actualizadas.
-    """
-    if user_id in _session_cache:
-        del _session_cache[user_id]
-        print(f"🗑️ Caché invalidada para user_id={user_id}")
+    return runner, session_id, session_service
 
 
 # ── Orquestador principal ─────────────────────────────────────────────────────
@@ -129,14 +98,13 @@ async def orchestrator(
     - Agent, Runner y sesión ADK se crean UNA SOLA VEZ por usuario y se
       reutilizan en mensajes posteriores (caché en _session_cache).
     - Las tools solo se recargan al invalidar la caché (conectar/desconectar app).
-    - El historial externo se inyecta SOLO en el primer mensaje; en los
-      siguientes ADK ya mantiene su propio historial.
+    - El historial externo se inyecta en los mensajes.
     - Se emiten eventos de progreso entre cada fase costosa para que el
       frontend no se quede bloqueado en "analyzing".
     """
 
     session_key = user_id or "anonymous"
-    is_new_session = session_key not in _session_cache
+    #is_new_session = session_key not in _session_cache
 
     # ── 1. Clasificar intención ───────────────────────────────────────────────
     # Siempre necesario; es rápido y determina el comportamiento del agente.
@@ -145,70 +113,28 @@ async def orchestrator(
         await event_callback("analyzing", {"message": "Analizando tu petición..."})
 
     async with timer("classify_intent"):
-        intent = classify_intent(user_input)
+        intent = await classify_intent(user_input)
         print(f"🎯 Intención: {intent}")
 
-    # ── 3. Obtener o crear contexto de sesión (costoso solo la primera vez) ──
-    if is_new_session:
-        if event_callback:
-            await event_callback("loading", {"message": "Cargando herramientas..."})
-
-        async with timer("build_session"):
-            runner, session_id, adk_tools, disconnected_apps = await _build_session(session_key)
-
-        _session_cache[session_key] = {
-            "runner":           runner,
-            "session_id":       session_id,
-            "disconnected_apps": disconnected_apps,
-        }
-        print(f"🛠️ Tools cargadas: {len(adk_tools)} | Apps desconectadas: {disconnected_apps}")
-    else:
-        ctx = _session_cache[session_key]
-        runner      = ctx["runner"]
-        session_id  = ctx["session_id"]
-        disconnected_apps = ctx["disconnected_apps"]
-        print(f"♻️ Reutilizando sesión ADK para user_id={session_key}")
+    disconnected_apps = _get_disconnected_apps_from_db(session_key)
+    runner, session_id, _ = await _build_runner(session_key, disconnected_apps)
+    print(f"🛠️ Runner construido para user_id={session_key}")
 
     # ── 4. System prompt (solo necesita intent; tools ya están en el Agent) ──
     # Reconstruimos el prompt cuando el intent o las apps desconectadas cambian.
     # En la mayoría de los mensajes esto es O(1) de string concatenación.
-    is_first_message = bool(is_new_session)
+    is_first_message = not bool(conversation_history)
     system_instruction = build_system_prompt(
         intent=intent,
         disconnected_apps=disconnected_apps,
         is_first_message=is_first_message,
         has_tool_error=False,
     )
+    runner.agent.instruction = system_instruction
     # Actualizar la instrucción del agente si cambió el intent
     # (ADK permite mutar agent.instruction antes de cada turno)
-    runner.agent.instruction = system_instruction
+    #runner.agent.instruction = system_instruction
 
-    # ── 5. Inyectar historial externo SOLO en el primer mensaje ──────────────
-    # En mensajes posteriores ADK ya tiene el historial dentro de la sesión.
-    if is_new_session and conversation_history:
-        if event_callback:
-            await event_callback("connecting", {"message": "Cargando historial..."})
-
-        async with timer("inject_history"):
-            try:
-                session_obj = await _global_session_service.get_session(
-                    user_id=session_key,
-                    app_name="AssistWork_Agent",
-                    session_id=session_id,
-                )
-                if session_obj:
-                    for msg in conversation_history:
-                        author = (
-                            "user"
-                            if msg.get("role") in ["user", "tool_response"]
-                            else "AssistWork_Agent"
-                        )
-                        content_obj = Content(parts=[Part(text=msg.get("content", ""))])
-                        hist_event = Event(author=author, content=content_obj)
-                        await _global_session_service.append_event(session_obj, hist_event)
-                    print(f"📜 Historial inyectado: {len(conversation_history)} mensajes")
-            except Exception as e:
-                print(f"⚠️ Error inyectando historial: {e}")
 
     # ── 6. Notificar que el agente está pensando ──────────────────────────────
     if event_callback:
@@ -219,9 +145,26 @@ async def orchestrator(
     total_steps = 0
 
     try:
+
+        if conversation_history:
+            history_text = "\n".join(
+                f"{'Usuario' if m.get('role') == 'user' else 'Asistente'}: {m.get('content', '')}"
+                for m in conversation_history
+            )
+            message_to_send = f"Contexto previo:\n{history_text}\n\nMensaje actual: {user_input}"
+        else:
+            message_to_send = user_input
+
+        #message_to_send = f"[CONTEXTO DEL SISTEMA: {system_instruction}]\n\n{message_to_send}"
+        # ✅ Correcto
+        
+        # Sin concatenar al mensaje
+        print("message_to_send", message_to_send)
+
+        
         async with timer("adk_run_async"):
             async for event in runner.run_async(
-                new_message=Content(parts=[Part(text=user_input)]),
+                new_message=Content(parts=[Part(text=message_to_send)]),
                 session_id=session_id,
                 user_id=session_key,
             ):
@@ -274,7 +217,7 @@ async def orchestrator(
                         )
                     else:
                         final_text = str(content) if content else ""
-                    break
+                    
 
         if event_callback:
             await event_callback("saving", {"message": "Finalizando..."})
@@ -292,7 +235,7 @@ async def orchestrator(
 
         # Si la sesión falló, la invalidamos para forzar recreación en el
         # siguiente mensaje en lugar de reutilizar un estado corrupto.
-        invalidate_session(session_key)
+        #invalidate_session(session_key)
 
         return {
             "success": False,

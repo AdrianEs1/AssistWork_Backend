@@ -19,15 +19,10 @@ Tu objetivo es ser útil, conciso y eficiente.
 # Solo se inyecta si la intención es agentTask.
 # ─────────────────────────────────────────────
 
-TOOL_RULES = """
-### REGLAS DE HERRAMIENTAS (obligatorias)
-1. SIEMPRE usa las herramientas disponibles. NUNCA digas que no puedes si tienes una herramienta para ello.
-2. Archivos: usa `localfiles_list_local_files` y/o `localfiles_read_local_file`.
-3. Correos: usa `gmail_list_emails`, `gmail_read_email`, `gmail_search_emails`, `gmail_send_email`.
-4. Teams: usa `teams_list_chats`, `teams_list_messages`, `teams_send_message`.
-5. Tareas multi-paso: ejecuta cada paso con la herramienta correspondiente.
-6. LLAMA la herramienta PRIMERO, luego responde con su resultado.
-7. NUNCA pidas al usuario contenido que puedas obtener tú mismo.
+TOOL_RULES = """Usa siempre las herramientas disponibles. Llama la herramienta primero, luego responde.
+NUNCA pidas permiso para usar una herramienta — ejecútala directamente.
+NUNCA preguntes si el usuario quiere que hagas algo que ya te pidió — hazlo.
+Si necesitas más datos para completar la tarea, obténlos con herramientas antes de preguntar al usuario.
 """
 
 # ─────────────────────────────────────────────
@@ -35,31 +30,14 @@ TOOL_RULES = """
 # Siempre se envía para mantener consistencia.
 # ─────────────────────────────────────────────
 
-RESPONSE_FORMAT = """
-### FORMATO DE RESPUESTA (obligatorio)
-- Separa párrafos con líneas vacías reales. NUNCA escribas \\n literal.
-- Usa títulos y listas cuando organices información.
-- Frases cortas (máximo 2-3 líneas por párrafo).
-- Usa negritas para destacar información importante.
-- El usuario debe poder escanear la respuesta rápidamente.
-"""
+RESPONSE_FORMAT = "Responde con párrafos cortos, negritas para lo importante, títulos y listas cuando organices información. Sin \\n literales."
 
 # ─────────────────────────────────────────────
 # AYUDA Y FUNCIONES — Para agentHelp
 # ─────────────────────────────────────────────
 
-AGENT_HELP = """
-### CAPACIDADES Y AYUDA
-Puedes ayudar al usuario con lo siguiente:
-1. **Gestión de Correos**: Leer, buscar y enviar emails a través de Gmail.
-2. **Archivos Locales**: Listar y leer archivos de las carpetas configuradas.
-3. **Comunicación**: Ver chats y enviar mensajes por Microsoft Teams.
-4. **Automatización**: Combinar estas tareas (ej: "Busca un archivo y envíalo por correo").
-
-**Configuración**:
-- Para conectar nuevas apps, el usuario debe ir a la sección "Apps".
-- Si una app falla, recomienda reconectarla.
-"""
+AGENT_HELP = """Capacidades: Gmail (leer/buscar/enviar), archivos locales, Microsoft Teams (chats/mensajes), automatización combinada.
+Para conectar apps: menú "Apps". Si falla una app, reconéctala."""
 
 # ─────────────────────────────────────────────
 # CONDICIONALES EXISTENTES
@@ -78,13 +56,7 @@ Algunas aplicaciones no están conectadas aún. Cuando el usuario pida algo rela
 **Privacidad:** Solo accedo a lo que autorizas. Puedes desconectar en cualquier momento.
 """
 
-ONBOARDING_HINT = """
-### EJEMPLOS DE COMANDOS
-- "Lista mis últimos 5 correos"
-- "Busca correos de juan@example.com sobre proyecto"
-- "Resume el archivo llamado propuesta_proyecto"
-- "Busca el archivo acta_reunion y envíamelo por correo"
-"""
+
 
 TROUBLESHOOTING_HINT = """
 ### SI HAY ERRORES DE CONEXIÓN
@@ -123,9 +95,6 @@ def build_system_prompt(
     if disconnected_apps and intent == "agentTask":
         apps_str = ", ".join(disconnected_apps)
         sections.append(f"**Apps desconectadas:** {apps_str}\n" + OAUTH_GUIDE)
-
-    if is_first_message:
-        sections.append(ONBOARDING_HINT)
 
     if has_tool_error:
         sections.append(TROUBLESHOOTING_HINT)

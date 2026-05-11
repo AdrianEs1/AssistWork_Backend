@@ -62,7 +62,7 @@ def get_past_messages_safe(conversation_id, before_dt):
                 Message.created_at < before_dt,
             )
             .order_by(Message.created_at.asc())
-            .limit(20)
+            .limit(10)
             .all()
         )
         return [{"role": m.role, "content": m.content} for m in messages]
