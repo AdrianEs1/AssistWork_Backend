@@ -1,5 +1,6 @@
 # config.py
 import os
+import asyncio
 from dotenv import load_dotenv
 import logging
 from contextlib import asynccontextmanager
@@ -7,18 +8,24 @@ from fastapi import FastAPI
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(" AssistWork_Agent")
+logger = logging.getLogger("AssistWork_Agent")
+
+
+async def _init_qdrant_background():
+    try:
+        await asyncio.sleep(0.1)
+        from apps.services.memory.qdrant_service import ensure_collection_initialized
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, ensure_collection_initialized)
+        logger.info("✅ Qdrant listo")
+    except Exception as e:
+        logger.warning(f"⚠️ Error inicializando Qdrant: {e}")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 Iniciando servidor...")
-    try:
-        from apps.services.memory.qdrant_service import ensure_collection_initialized
-        logger.info("Inicializando colección Qdrant...")
-        ensure_collection_initialized()
-        logger.info("✅ Qdrant listo")
-    except Exception as e:
-        logger.warning(f"⚠️ Error en startup: {e} — la app continúa sin vector store")
+    asyncio.create_task(_init_qdrant_background())
     logger.info("✅ Servidor listo para recibir requests")
     yield
     logger.info("🛑 Servidor detenido")

@@ -1,3 +1,14 @@
+#La clase _DummyAuthProviderRegistry se crea para evitar el error ImportError de google.adk.auth.auth_provider_registry
+#Evitando un coldstar innecesario en el arranque de la app
+class _DummyAuthProviderRegistry:
+    def __init__(self): pass
+    def __getattr__(self, name): return lambda *a, **kw: None
+
+import google.adk.auth.auth_provider_registry as _apr
+_apr.AuthProviderRegistry = _DummyAuthProviderRegistry
+
+
+
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import lifespan, logger

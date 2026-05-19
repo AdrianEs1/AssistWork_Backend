@@ -11,12 +11,19 @@ VECTOR_SIZE = 3072
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
-client = QdrantClient(
-    url=QDRANT_URL,
-    api_key=QDRANT_API_KEY,
-    timeout=30,
-    prefer_grpc=False
-)
+# ✅ Reemplázalo con esto
+_client = None
+
+def get_client() -> QdrantClient:
+    global _client
+    if _client is None:
+        _client = QdrantClient(
+            url=QDRANT_URL,
+            api_key=QDRANT_API_KEY,
+            timeout=30,
+            prefer_grpc=False
+        )
+    return _client
 
 
 def get_embedding(text: str) -> list:
@@ -30,7 +37,7 @@ def get_embedding(text: str) -> list:
 # --- Validar que la colección tiene la config correcta ---
 def _is_collection_config_valid() -> bool:
     try:
-        info = client.get_collection(COLLECTION_NAME)
+        info = get_client().get_collection(COLLECTION_NAME)
         vectors_config = info.config.params.vectors
 
         if isinstance(vectors_config, dict):
@@ -52,7 +59,7 @@ def _is_collection_config_valid() -> bool:
 def init_collection(max_retries=3):
     for attempt in range(max_retries):
         try:
-            collections = client.get_collections().collections
+            collections = get_client().get_collections().collections
             collection_exists = COLLECTION_NAME in [c.name for c in collections]
 
             if collection_exists:
@@ -60,11 +67,11 @@ def init_collection(max_retries=3):
                     print(f"ℹ️ Colección '{COLLECTION_NAME}' ya existe y su configuración es correcta")
                 else:
                     print(f"🗑️ Recreando colección '{COLLECTION_NAME}' por configuración incompatible...")
-                    client.delete_collection(COLLECTION_NAME)
+                    get_client().delete_collection(COLLECTION_NAME)
                     collection_exists = False
 
             if not collection_exists:
-                client.create_collection(
+                get_client().create_collection(
                     collection_name=COLLECTION_NAME,
                     vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE)
                 )
@@ -76,7 +83,7 @@ def init_collection(max_retries=3):
                 ("role", PayloadSchemaType.KEYWORD),
             ]:
                 try:
-                    client.create_payload_index(
+                    get_client().create_payload_index(
                         collection_name=COLLECTION_NAME,
                         field_name=field,
                         field_schema=schema
@@ -103,7 +110,7 @@ def store_message(text, metadata=None, max_retries=3):
             vector = get_embedding(text)
             point_id = str(uuid.uuid4())
 
-            client.upsert(
+            get_client().upsert(
                 collection_name=COLLECTION_NAME,
                 points=[
                     PointStruct(
@@ -141,7 +148,7 @@ def search_context(query, user_id=None, conversation_id=None, limit=10, score_th
 
             query_filter = Filter(must=conditions) if conditions else None
 
-            results = client.search(
+            results = get_client().search(
                 collection_name=COLLECTION_NAME,
                 query_vector=query_vector,
                 query_filter=query_filter,
@@ -165,7 +172,7 @@ def search_context(query, user_id=None, conversation_id=None, limit=10, score_th
 # --- Verificar conexión ---
 def test_qdrant_connection():
     try:
-        collections = client.get_collections()
+        collections = get_client().get_collections()
         print(f"✅ Conexión a Qdrant exitosa. Colecciones: {len(collections.collections)}")
         return True
     except Exception as e:
